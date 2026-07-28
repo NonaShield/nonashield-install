@@ -1,0 +1,949 @@
+# =============================================================================
+# NonaShield — FULL Stack (generic Linux, any distro with Docker Engine)
+#
+# Byte-for-byte the same service definitions as docker-compose.yml (the
+# canonical stack, proven working in AWS cloud) -- Docker Compose files carry
+# no distro-specific content. Use THIS filename on a non-Ubuntu Linux host
+# (Debian, RHEL/CentOS/Rocky, Amazon Linux, etc.) — install Docker Engine +
+# the Compose plugin via your distro's own package manager first
+# (https://docs.docker.com/engine/install/ has the per-distro steps), then
+# `cp .env.example .env`, fill in secrets, `docker compose -f
+# docker-compose.full.linux.yml up -d --build`.
+#
+# Complements docker-compose.minimal.linux.yml (which omits Ollama/Vault/
+# Airflow/Prometheus/Grafana — see that file's header for why each is safe
+# to skip). Use THIS file for the complete stack, including the AI Fraud
+# Advisory LLM narrative and observability dashboards.
+#
+# Single authoritative compose file. No separate demo/UAT variants.
+# The mobile SDK represents the customer app; every other layer is
+# production-grade from the first deployment.
+#
+# Services (15 total):
+#   Edge      nginx (OpenResty + Lua pipeline)
+#   Infra     postgres · redis · redpanda · neo4j · minio · mqtt · vault · ollama
+#   Init      redpanda-init · minio-init · neo4j-init · vault-init · ollama-init
+#   App       backend · ingestion · processor · airflow
+#   Obs       prometheus · grafana
+#
+# Required environment variables (no defaults — must be set):
+#   POSTGRES_PASSWORD, NEO4J_PASSWORD, MINIO_ROOT_PASSWORD, VAULT_DEV_TOKEN
+#   GF_SECURITY_ADMIN_PASSWORD, AIRFLOW_SECRET_KEY, AIRFLOW_ADMIN_PASSWORD
+#   AIRFLOW_FERNET_KEY, PAYSHIELD_SIGNING_SECRET_DEFAULT
+#   SSL_DIR        — host path to TLS cert dir (fullchain.pem + privkey.pem)
+#   GEOIP_DIR      — host path to MaxMind GeoLite2 .mmdb dir
+#
+# Optional (have sensible defaults):
+#   PAYSHIELD_SERVER_NAME  default: api.diimeai.com
+#   OLLAMA_MODEL           default: llama3
+#   HTTPS_PORT             default: 443
+#   HTTP_PORT              default: 80
+#   See individual services for full list.
+#
+# Quick start (run from install/, .env lives in payshield-backend/):
+#   cp ../payshield-backend/.env.example ../payshield-backend/.env   # fill in secrets
+#   docker compose -f docker-compose.full.linux.yml --env-file ../payshield-backend/.env up -d --build
+#   docker compose -f docker-compose.full.linux.yml --env-file ../payshield-backend/.env down        # keep data
+#   docker compose -f docker-compose.full.linux.yml --env-file ../payshield-backend/.env down -v     # wipe data
+# =============================================================================
+
+networks:
+  payshield-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  redpanda_data:
+  neo4j_data:
+  neo4j_logs:
+  neo4j_import:
+  ollama_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:
+  vault_data:
+  mosquitto_data:
+  mosquitto_logs:
+  nginx_logs:
+  # Fraud model artifacts (Day-1 baseline + self-trained/promoted models).
+  # MUST persist across container recreates (restart / redeploy / code change)
+  # so the baseline is built ONCE and trained models are never lost. Shared by
+  # backend (serve), airflow (train), and processor.
+  models_data:
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # LAYER 0 — EDGE GATEWAY (OpenResty + 20-phase Lua security pipeline)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  nginx:
+    build:
+      context: ../nginx
+      dockerfile: Dockerfile
+    image: nonashield/nginx-edge:latest
+    container_name: payshield-nginx
+    environment:
+      PAYSHIELD_SERVER_NAME: "${PAYSHIELD_SERVER_NAME:-api.diimeai.com}"
+      EDGE_CONTEXT_HMAC_KEY: "${EDGE_CONTEXT_HMAC_KEY:?EDGE_CONTEXT_HMAC_KEY must be set (openssl rand -hex 32)}"
+      REDIS_HOST:            redis
+      REDIS_PORT:            "6379"
+      REDIS_PASSWORD:        "${REDIS_PASSWORD:-}"
+      ALLOWED_ORIGINS:       "${CORS_ALLOWED_ORIGINS:-https://diimeai.com,https://api.diimeai.com}"
+      POLICY_SYNC_INTERVAL:  "60"
+      ATTESTATION_BYPASS_ALLOWED: "${ATTESTATION_BYPASS_ALLOWED:-false}"
+    ports:
+      - "${HTTPS_PORT:-443}:8443"
+      - "${HTTP_PORT:-80}:8080"
+    volumes:
+      # TLS certificates — Let's Encrypt or your CA.
+      # Directory must contain: fullchain.pem  privkey.pem
+      - type: bind
+        source: "${SSL_DIR:?SSL_DIR must be set (dir containing fullchain.pem + privkey.pem)}"
+        target: /etc/nginx/ssl
+        read_only: true
+      # MaxMind GeoLite2 databases for geo-enrichment and ASN blocking.
+      # Download: https://dev.maxmind.com/geoip/geolite2-free-geolocation-data
+      # Required files: GeoLite2-City.mmdb  GeoLite2-ASN.mmdb  GeoLite2-Anonymous-IP.mmdb
+      - type: bind
+        source: "${GEOIP_DIR:?GEOIP_DIR must be set (dir containing GeoLite2-*.mmdb files)}"
+        target: /usr/share/GeoIP
+        read_only: true
+      # Threat matrix shared with the backend compliance evaluator.
+      - type: bind
+        source: ../payshield-backend/config/threat_matrix.json
+        target: /etc/nginx/config/threat_matrix.json
+        read_only: true
+      # Lua security pipeline — mounted from ../nginx/lua so fixes survive
+      # container restarts without rebuilding the nginx-edge image.
+      - type: bind
+        source: ../nginx/lua
+        target: /etc/nginx/lua
+        read_only: true
+      # nginx.conf template — entrypoint.sh reads this, substitutes
+      # PAYSHIELD_SERVER_NAME, then writes /etc/nginx/nginx.conf at startup.
+      # Mounting the template means pipeline fixes survive without image rebuild.
+      - type: bind
+        source: ../nginx/nginx.conf
+        target: /etc/nginx/nginx.conf.template
+        read_only: true
+      - nginx_logs:/var/log/nginx
+    networks: [payshield-net]
+    depends_on:
+      backend:
+        condition: service_healthy
+      grafana:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -k https://localhost:8443/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # LAYER 1 — INFRASTRUCTURE
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: payshield-postgres
+    environment:
+      POSTGRES_DB:       payshield
+      POSTGRES_USER:     payshield
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../payshield-backend/infra/postgres/init-multiple-dbs.sh:/docker-entrypoint-initdb.d/init-multiple-dbs.sh:ro
+    networks: [payshield-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payshield -d payshield"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  redis:
+    image: redis:7-alpine
+    container_name: payshield-redis
+    # List (exec) form — each flag is an explicit element.
+    # NEVER use 'command: >' (folded block scalar) for redis-server: YAML folds
+    # newlines into spaces and passes any inline '#' comment text as literal
+    # command-line arguments that redis-server does not understand, causing a
+    # fatal startup error.  The list form is parsed as argv[] — no shell
+    # interpretation, no comment ambiguity.
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - 96mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --requirepass
+      - "${REDIS_PASSWORD:-}"
+      - --protected-mode
+      - "yes"
+      - --tcp-keepalive
+      - "60"
+    volumes:
+      - redis_data:/data
+    networks: [payshield-net]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ${REDIS_PASSWORD:+-a $REDIS_PASSWORD} ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+  redpanda:
+    image: redpandadata/redpanda:v23.3.11
+    container_name: payshield-redpanda
+    command:
+      - redpanda start
+      - --smp 1
+      # 350M internal + ~50M process overhead fits within the 400m container limit.
+      # Do NOT set this higher than (container_limit - 50M): Redpanda will OOM-kill.
+      - --memory 350M
+      - --reserve-memory 0M
+      - --node-id 0
+      - --check=false
+      - --kafka-addr INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      - --advertise-kafka-addr INTERNAL://redpanda:29092,EXTERNAL://localhost:9092
+      - --pandaproxy-addr 0.0.0.0:8082
+      - --advertise-pandaproxy-addr redpanda:8082
+      - --schema-registry-addr 0.0.0.0:8081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
+    networks: [payshield-net]
+    healthcheck:
+      # Issue 6 fix: 'rpk cluster health' in v23.3.11 connects to the Admin
+      # REST API (port 9644), NOT the Kafka broker port.  Using it here caused
+      # the healthcheck to pass before the Kafka listener was actually ready,
+      # sending redpanda-init into an infinite loop on topic creation.
+      # Fix: check the Kafka broker port (29092) directly via bash /dev/tcp —
+      # this is a kernel-level TCP connect, no external tools required.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/29092' 2>/dev/null && echo ok || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          # 350M Redpanda internal + ~50M process overhead = ~400M actual.
+          memory: 400m
+
+  redpanda-init:
+    image: redpandadata/redpanda:v23.3.11
+    container_name: payshield-redpanda-init
+    entrypoint: ["/bin/bash", "-c"]
+    environment:
+      # RPK_BROKERS / RPK_API_URLS configure rpk for topic creation below.
+      # The readiness wait loop uses bash /dev/tcp (Issue 6 fix) — not
+      # 'rpk cluster health' which targets port 9644 (Admin REST) in v23.3.11.
+      RPK_BROKERS:  redpanda:29092
+      RPK_API_URLS: http://redpanda:9644
+    command:
+      - |
+        echo "Waiting for Redpanda Kafka port (29092)..."
+        until bash -c 'exec 3<>/dev/tcp/redpanda/29092' 2>/dev/null; do sleep 3; done
+        echo "Kafka port ready. Creating topics..."
+        # Single-user demo: 1 partition per topic — minimises Redpanda memory
+        # and segment overhead.  Scale partitions up for multi-consumer prod.
+        rpk topic create telemetry                --partitions 1 --replicas 1 2>/dev/null || true
+        rpk topic create audit                    --partitions 1 --replicas 1 2>/dev/null || true
+        rpk topic create payshield-dlq            --partitions 1 --replicas 1 2>/dev/null || true
+        rpk topic create risk-decisions           --partitions 1 --replicas 1 2>/dev/null || true
+        rpk topic create compliance-events        --partitions 1 --replicas 1 2>/dev/null || true
+        rpk topic create payshield.trusted_events --partitions 1 --replicas 1 2>/dev/null || true
+        rpk topic create payshield.events.raw     --partitions 1 --replicas 1 2>/dev/null || true
+        rpk topic create payshield.events.scored  --partitions 1 --replicas 1 2>/dev/null || true
+        echo "All Redpanda topics ready."
+    networks: [payshield-net]
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    restart: "no"
+    logging: *default-logging
+
+  neo4j:
+    # neo4j:4.4-community — LTS release, proven stable in Docker since 2022.
+    # Neo4j 5.x was dropped because its plugin subsystem frequently attempts a
+    # runtime GitHub download (for APOC or other labs plugins) that hangs on EC2,
+    # blocking the Bolt port indefinitely and causing permanent "unhealthy" state.
+    # 4.4 has no automatic plugin download behaviour and starts reliably in <30s.
+    # All init Cypher scripts use only native 4.4-compatible syntax.
+    image: neo4j:4.4-community
+    container_name: payshield-neo4j
+    environment:
+      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set}"
+      # Neo4j 4.4 env var naming convention:
+      #   dot (.) separator in config key  → single underscore (_) in env var
+      #   underscore (_) within a key word → double underscore (__) in env var
+      #
+      # dbms.memory.heap.initial_size → NEO4J_dbms_memory_heap_initial__size
+      #   (initial_size has an underscore → double __ before size)
+      # dbms.memory.heap.max_size     → NEO4J_dbms_memory_heap_max__size
+      #   (max_size has an underscore → double __ before size)
+      # dbms.memory.pagecache.size    → NEO4J_dbms_memory_pagecache_size
+      #   (pagecache.size has a dot → single _ before size — NOT double __)
+      #
+      # heap(512) + pagecache(64) + JVM native(~150) ≈ 726 MB < 800 MB limit.
+      NEO4J_dbms_memory_heap_initial__size: 256m
+      NEO4J_dbms_memory_heap_max__size:     512m
+      NEO4J_dbms_memory_pagecache_size:     64m
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_import:/import
+      - ../payshield-backend/scripts/neo4j_init.cypher:/import/neo4j_init.cypher:ro
+      - ../payshield-backend/scripts/neo4j_init_indexes.cypher:/import/neo4j_init_indexes.cypher:ro
+    networks: [payshield-net]
+    healthcheck:
+      # Check the Bolt port with a raw TCP connect — no authentication needed.
+      # Neo4j only opens port 7687 AFTER it has fully initialised the database
+      # and is ready to accept queries.  Authentication is verified by neo4j-init
+      # which runs cypher-shell with $NEO4J_PASSWORD after this healthcheck passes.
+      # bash /dev/tcp with 127.0.0.1 (not localhost) avoids IPv6 on Amazon Linux.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/7687' 2>/dev/null && echo ok || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          # heap_max(512) + pagecache(64) + JVM native(~150) ≈ 726 MB
+          # 800 MB limit leaves ~74 MB headroom — minimum reliable for Neo4j 4.4.
+          memory: 800m
+
+  neo4j-init:
+    image: neo4j:4.4-community
+    container_name: payshield-neo4j-init
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "Waiting for Neo4j Bolt..."
+        until cypher-shell -a bolt://neo4j:7687 -u neo4j -p "${NEO4J_PASSWORD}" "RETURN 1" > /dev/null 2>&1; do
+          sleep 4
+        done
+        cypher-shell -a bolt://neo4j:7687 -u neo4j -p "${NEO4J_PASSWORD}" \
+          --file /scripts/neo4j_init.cypher && echo "neo4j_init.cypher done"
+        cypher-shell -a bolt://neo4j:7687 -u neo4j -p "${NEO4J_PASSWORD}" \
+          --file /scripts/neo4j_init_indexes.cypher && echo "neo4j_init_indexes.cypher done"
+        echo "Neo4j schema ready."
+    environment:
+      NEO4J_PASSWORD: "${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set}"
+    volumes:
+      - ../payshield-backend/scripts/neo4j_init.cypher:/scripts/neo4j_init.cypher:ro
+      - ../payshield-backend/scripts/neo4j_init_indexes.cypher:/scripts/neo4j_init_indexes.cypher:ro
+    networks: [payshield-net]
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    restart: "no"
+    logging: *default-logging
+
+  minio:
+    image: minio/minio:RELEASE.2024-03-15T01-07-19Z
+    container_name: payshield-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER:     "${MINIO_ROOT_USER:-payshield}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}"
+    volumes:
+      - minio_data:/data
+    ports:
+      # S3 API + console bound to LOOPBACK ONLY (127.0.0.1) so the object store
+      # and its admin console are never reachable from outside the host.  Other
+      # containers reach MinIO over the internal payshield-net (minio:9000), not
+      # via the published host port.  Use an SSH tunnel for console access.
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    networks: [payshield-net]
+    healthcheck:
+      # minio/minio:RELEASE.2024-* is built on UBI-minimal which does NOT
+      # include curl or wget. Use 'mc ready local' instead — MinIO bundles
+      # the mc client at /usr/bin/mc inside the server image itself.
+      # mc reads MINIO_ROOT_USER / MINIO_ROOT_PASSWORD from the environment
+      # so no explicit alias configuration is needed here.
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 150m
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-03-13T23-51-57Z
+    container_name: payshield-minio-init
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until mc alias set local http://minio:9000 \
+              "${MINIO_ROOT_USER:-payshield}" "${MINIO_ROOT_PASSWORD}" 2>/dev/null; do sleep 3; done
+        mc mb --ignore-existing local/payshield-evidence
+        mc version enable local/payshield-evidence
+        mc retention set --default COMPLIANCE 5y local/payshield-evidence 2>/dev/null || \
+          echo "WARN: Object lock requires MinIO started with lock mode; skipping retention"
+        mc mb --ignore-existing local/payshield-reports
+        mc version enable local/payshield-reports
+        mc mb --ignore-existing local/payshield-models
+        echo "MinIO buckets ready."
+    environment:
+      MINIO_ROOT_USER:     "${MINIO_ROOT_USER:-payshield}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}"
+    networks: [payshield-net]
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    logging: *default-logging
+
+  mqtt:
+    image: eclipse-mosquitto:2
+    container_name: payshield-mqtt
+    # Issue 5 fix: 'keepalive_interval' is a bridge-connection option in
+    # Mosquitto 2.x — placing it at global scope causes a fatal parse error.
+    # It has been removed from infra/mosquitto/mosquitto.conf; per-client
+    # keepalive is negotiated in the MQTT CONNECT packet and needs no global
+    # override.
+    #
+    # Issue 4 fix: Mosquitto listens on container port 9001 (WebSocket) but
+    # that port is NOT mapped to the host — only TCP port 1883 is exposed.
+    # MinIO uses host port 9001 for its web console.  Exposing Mosquitto's
+    # WebSocket on the same host port would cause a bind conflict at startup.
+    # Backend services connect to mqtt:1883 over the internal Docker network.
+    volumes:
+      - ../payshield-backend/infra/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_logs:/mosquitto/log
+    ports:
+      # MQTT bound to LOOPBACK ONLY (127.0.0.1).  The broker allows anonymous
+      # connections (dev convenience), so it must never be reachable off-host.
+      # Backend/dashboard publishers reach it over payshield-net (mqtt:1883).
+      - "127.0.0.1:1883:1883"
+      # 9001 (WebSocket) intentionally NOT mapped — MinIO console owns host:9001
+    networks: [payshield-net]
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_pub -h localhost -t '$$SYS/health' -m '' -q 0 2>/dev/null && echo ok || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 32m
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: payshield-ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    networks: [payshield-net]
+    healthcheck:
+      # ollama/ollama does not guarantee curl or wget in all base variants.
+      # 'ollama list' is always available — it queries the local server API
+      # and exits non-zero when the daemon is not ready.  Exec form (CMD)
+      # avoids any shell quoting or comment-parsing issues.
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          # tinyllama (single-user demo default) requires ~637 MB loaded.
+          # phi3:mini requires ~2.3 GB — set OLLAMA_MEMORY_LIMIT=3g in .env to use it.
+          # llama3 requires ~4.5 GB — set OLLAMA_MEMORY_LIMIT=5g in .env to use it.
+          memory: "${OLLAMA_MEMORY_LIMIT:-1500m}"
+
+  ollama-init:
+    image: curlimages/curl:latest
+    container_name: payshield-ollama-init
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for Ollama API..."
+        until curl -sf http://ollama:11434/api/tags > /dev/null; do sleep 5; done
+
+        # Pull inference model (llama3 for LLM analyst / explainer)
+        echo "Pulling inference model: ${OLLAMA_MODEL:-llama3} ..."
+        curl -X POST http://ollama:11434/api/pull \
+          -H "Content-Type: application/json" \
+          -d "{\"name\": \"${OLLAMA_MODEL:-llama3}\", \"stream\": false}" \
+          --max-time 1800 \
+          -w "\nHTTP status: %{http_code}\n" || echo "WARN: inference model pull failed — will retry on first use"
+
+        # Pull embedding model (nomic-embed-text for RAGRetriever FAISS index)
+        # Required by ai_orchestrator/tools/rag_retriever.py to embed historical
+        # fraud cases and query events into 768-d vectors for similarity search.
+        # Without this model the retriever falls back to hash-based embeddings
+        # (lower quality but pipeline never blocks).
+        echo "Pulling embedding model: nomic-embed-text ..."
+        curl -X POST http://ollama:11434/api/pull \
+          -H "Content-Type: application/json" \
+          -d "{\"name\": \"nomic-embed-text\", \"stream\": false}" \
+          --max-time 600 \
+          -w "\nHTTP status: %{http_code}\n" || echo "WARN: nomic-embed-text pull failed — RAG will use hash fallback"
+
+        echo "Ollama models ready."
+    environment:
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-llama3}"
+    networks: [payshield-net]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+    logging: *default-logging
+
+  vault:
+    image: hashicorp/vault:1.16
+    container_name: payshield-vault
+    cap_add: [IPC_LOCK]
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID:  "${VAULT_DEV_TOKEN:?VAULT_DEV_TOKEN must be set}"
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_ADDR:               http://0.0.0.0:8200
+    command: server -dev
+    volumes:
+      - vault_data:/vault/data
+      - ../payshield-backend/infra/vault/vault-init.sh:/vault/init.sh:ro
+    networks: [payshield-net]
+    healthcheck:
+      test: ["CMD-SHELL", "vault status -address=http://localhost:8200 2>&1 | grep -q 'Initialized' || curl -sf http://localhost:8200/v1/sys/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          # Vault dev mode Go runtime needs ≥96 MB; 64 MB causes OOM on startup.
+          memory: 96m
+
+  vault-init:
+    image: hashicorp/vault:1.16
+    container_name: payshield-vault-init
+    environment:
+      VAULT_ADDR:          http://vault:8200
+      VAULT_TOKEN:         "${VAULT_DEV_TOKEN:?VAULT_DEV_TOKEN must be set}"
+      POSTGRES_PASSWORD:   "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}"
+      MINIO_ROOT_USER:     "${MINIO_ROOT_USER:-payshield}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}"
+      NEO4J_PASSWORD:      "${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set}"
+    entrypoint: ["/bin/sh", "/vault/init.sh"]
+    volumes:
+      - ../payshield-backend/infra/vault/vault-init.sh:/vault/init.sh:ro
+    networks: [payshield-net]
+    depends_on:
+      vault:
+        condition: service_healthy
+    restart: "no"
+    logging: *default-logging
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # LAYER 2 — OBSERVABILITY
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  prometheus:
+    image: prom/prometheus:v2.51.2
+    container_name: payshield-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+      - --web.enable-admin-api
+    volumes:
+      - ../payshield-backend/infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks: [payshield-net]
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+  # Grafana at /dashboard/ sub-path, proxied through nginx (conf.d/grafana_locations.conf).
+  # Do NOT expose port 3000 externally — all access goes through the nginx security pipeline.
+  grafana:
+    image: grafana/grafana:10.4.1
+    container_name: payshield-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER:         "${GF_SECURITY_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD:     "${GF_SECURITY_ADMIN_PASSWORD:?GF_SECURITY_ADMIN_PASSWORD must be set}"
+      GF_PATHS_PROVISIONING:          /etc/grafana/provisioning
+      GF_SERVER_ROOT_URL:             "https://${PAYSHIELD_SERVER_NAME:-api.diimeai.com}/dashboard/"
+      GF_SERVER_SERVE_FROM_SUB_PATH:  "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../payshield-backend/infra/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks: [payshield-net]
+    depends_on: [prometheus]
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # LAYER 3 — APPLICATION SERVICES
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  backend:
+    build:
+      context: ../payshield-backend
+      dockerfile: Dockerfile
+      target: production
+    image: nonashield/backend:latest
+    container_name: payshield-backend
+    environment:
+      ENVIRONMENT:     "${ENVIRONMENT:-production}"
+      APP_ENV:         "${APP_ENV:-production}"
+      LOG_LEVEL:       "${LOG_LEVEL:-info}"
+      UVICORN_WORKERS: "${UVICORN_WORKERS:-4}"
+      UVICORN_HOST:    "0.0.0.0"
+      UVICORN_PORT:    "8000"
+
+      # API security
+      API_SECRET_KEY:                   "${API_SECRET_KEY:?API_SECRET_KEY must be set}"
+      JWT_SECRET:                       "${JWT_SECRET:?JWT_SECRET must be set}"
+      BACKEND_API_KEY:                  "${BACKEND_API_KEY:?BACKEND_API_KEY must be set}"
+      PAYSHIELD_SIGNING_SECRET_DEFAULT: "${PAYSHIELD_SIGNING_SECRET_DEFAULT:?PAYSHIELD_SIGNING_SECRET_DEFAULT must be set}"
+      POLICY_SIGNING_SECRET:            "${PAYSHIELD_SIGNING_SECRET_DEFAULT:?PAYSHIELD_SIGNING_SECRET_DEFAULT must be set}"
+
+      # JWT RSA key pair — generated by deploy.sh / stored in secrets manager.
+      # Both absent in local dev: key_loader generates an ephemeral pair (session-only).
+      JWT_PRIVATE_KEY_PEM: "${JWT_PRIVATE_KEY_PEM:-}"
+      JWT_PUBLIC_KEY_PEM:  "${JWT_PUBLIC_KEY_PEM:-}"
+
+      # Database
+      DATABASE_URL:      "postgresql://payshield:${POSTGRES_PASSWORD}@postgres:5432/payshield"
+      POSTGRES_HOST:     postgres
+      POSTGRES_PORT:     "5432"
+      POSTGRES_USER:     payshield
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}"
+      DB_POOL_SIZE:      "${DB_POOL_SIZE:-10}"
+      DB_MAX_OVERFLOW:   "${DB_MAX_OVERFLOW:-20}"
+
+      # Cache
+      REDIS_URL:      "redis://:${REDIS_PASSWORD:-}@redis:6379/0"
+      REDIS_HOST:     redis
+      REDIS_PORT:     "6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+
+      # Streaming
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:29092
+      KAFKA_TOPIC_TELEMETRY:   telemetry
+      KAFKA_TOPIC_AUDIT:       audit
+      KAFKA_TOPIC_DLQ:         payshield-dlq
+      KAFKA_CONSUMER_GROUP:    payshield-processor
+      ENABLE_KAFKA_AUDIT:      "true"
+      ENABLE_AUDIT_DB_PERSIST: "true"
+
+      # Graph
+      NEO4J_URI:      bolt://neo4j:7687
+      NEO4J_USER:     neo4j
+      NEO4J_PASSWORD: "${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set}"
+
+      # AI (analyst features only — never in real-time decision path)
+      OLLAMA_URL:   http://ollama:11434
+      OLLAMA_HOST:  http://ollama:11434
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-llama3}"
+
+      # Storage (MinIO as S3-compatible store)
+      AWS_ENDPOINT_URL:        http://minio:9000
+      AWS_S3_FORCE_PATH_STYLE: "true"
+      AWS_ACCESS_KEY_ID:       "${MINIO_ROOT_USER:-payshield}"
+      AWS_SECRET_ACCESS_KEY:   "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}"
+      AWS_DEFAULT_REGION:      "${AWS_DEFAULT_REGION:-ap-south-1}"
+      AWS_REGION:              "${AWS_DEFAULT_REGION:-ap-south-1}"
+      S3_BUCKET_EVIDENCE:      payshield-evidence
+      S3_BUCKET_REPORTS:       payshield-reports
+      EVIDENCE_SIGNING_REQUIRED: "${EVIDENCE_SIGNING_REQUIRED:-true}"
+      EVIDENCE_STORAGE_REQUIRED: "${EVIDENCE_STORAGE_REQUIRED:-true}"
+      EVIDENCE_RETENTION_YEARS:  "5"
+
+      # Secrets
+      VAULT_ADDR:  http://vault:8200
+      VAULT_TOKEN: "${VAULT_DEV_TOKEN:?VAULT_DEV_TOKEN must be set}"
+      USE_VAULT:   "false"
+
+      # MQTT
+      MQTT_HOST: mqtt
+      MQTT_PORT: "1883"
+
+      # CORS
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-https://diimeai.com,https://api.diimeai.com}"
+
+      # Edge token HMAC — MUST match nginx value exactly
+      EDGE_CONTEXT_HMAC_KEY: "${EDGE_CONTEXT_HMAC_KEY:?EDGE_CONTEXT_HMAC_KEY must be set}"
+
+      # Dashboard admin — used by the 20260602_add_dashboard_admins Alembic migration
+      # to seed the first super_admin on first deployment (idempotent on re-runs).
+      # DASHBOARD_SUPER_ADMIN_PASSWORD is required; deployment aborts if missing.
+      DASHBOARD_SUPER_ADMIN_USERNAME: "${DASHBOARD_SUPER_ADMIN_USERNAME:-super_admin}"
+      DASHBOARD_SUPER_ADMIN_PASSWORD: "${DASHBOARD_SUPER_ADMIN_PASSWORD:?DASHBOARD_SUPER_ADMIN_PASSWORD must be set}"
+      # Bank webhook — called by SOC "Notify Bank" action. Leave blank to disable.
+      BANK_BLOCK_WEBHOOK_URL:   "${BANK_BLOCK_WEBHOOK_URL:-}"
+      BANK_BLOCK_WEBHOOK_TOKEN: "${BANK_BLOCK_WEBHOOK_TOKEN:-}"
+
+      # Composite Decision Token layer weights (optional — defaults used if absent)
+      CDT_WEIGHT_EDGE_TRUST: "${CDT_WEIGHT_EDGE_TRUST:-0.10}"
+      CDT_WEIGHT_FRAUD:      "${CDT_WEIGHT_FRAUD:-0.30}"
+      CDT_WEIGHT_GRAPH:      "${CDT_WEIGHT_GRAPH:-0.15}"
+      CDT_WEIGHT_SEMANTIC:   "${CDT_WEIGHT_SEMANTIC:-0.15}"
+      CDT_WEIGHT_AI:         "${CDT_WEIGHT_AI:-0.20}"
+      CDT_WEIGHT_COMPLIANCE: "${CDT_WEIGHT_COMPLIANCE:-0.10}"
+      CDT_BLOCK_THRESHOLD:   "${CDT_BLOCK_THRESHOLD:-75}"
+      CDT_STEP_UP_THRESHOLD: "${CDT_STEP_UP_THRESHOLD:-50}"
+      CDT_REVIEW_THRESHOLD:  "${CDT_REVIEW_THRESHOLD:-30}"
+
+      # Apple iOS attestation
+      APPLE_APP_ID:         "${APPLE_APP_ID:-}"
+      APPLE_APP_ATTEST_ENV: "${APPLE_APP_ATTEST_ENV:-production}"
+      ATTESTATION_BYPASS_ALLOWED: "${ATTESTATION_BYPASS_ALLOWED:-false}"
+
+      # Demo login credentials (non-prod only — /auth/login validates against these)
+      DEMO_LOGIN_USERNAME: "${DEMO_LOGIN_USERNAME:-demo_investor}"
+      DEMO_LOGIN_PASSWORD: "${DEMO_LOGIN_PASSWORD:-Demo@123}"
+
+      # PDF evidence signing
+      PDF_CERT_PATH:       /app/certs/payshield-pdf-signing.p12
+      PDF_CERT_PASSPHRASE: "${PDF_CERT_PASSPHRASE:-}"
+
+      # Observability
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus_multiproc
+
+      # Fraud model artifacts on a persistent volume — built/trained once,
+      # reused across restarts & redeploys (never rebuilt on start/stop).
+      PAYSHIELD_MODEL_DIR: /app/models
+
+    volumes:
+      - ../payshield-backend/keys:/app/keys
+      - models_data:/app/models
+    networks: [payshield-net]
+    depends_on:
+      # Hard blockers: DB and cache must be accepting connections.
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # Kafka broker + topics must exist before the audit consumer starts.
+      redpanda:
+        condition: service_healthy
+      redpanda-init:
+        condition: service_completed_successfully
+      # Soft starts: backend connects to these lazily and degrades gracefully
+      # if they are not ready yet.  Using service_started (not service_healthy)
+      # prevents a single slow/failed init container from blocking the backend
+      # indefinitely and causing the deploy health-check to time out.
+      neo4j:
+        condition: service_started
+      minio:
+        condition: service_started
+      vault:
+        condition: service_started
+      models-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 60s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          # 512m: startup peak (alembic + create_all + model imports) can exceed
+          # 400m; 512m leaves enough headroom without crowding other services.
+          memory: "${BACKEND_MEMORY_LIMIT:-512m}"
+
+  ingestion:
+    build: ../payshield-backend/ingestion
+    image: nonashield/ingestion:latest
+    container_name: payshield-ingestion
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:29092
+      KAFKA_TOPIC:             telemetry
+      APP_ENV:                 "${APP_ENV:-production}"
+    networks: [payshield-net]
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      redpanda-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+
+  processor:
+    build:
+      context: ../payshield-backend
+      dockerfile: stream_processor/Dockerfile
+    image: nonashield/processor:latest
+    container_name: payshield-processor
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:29092
+      REDIS_URL:               "redis://:${REDIS_PASSWORD:-}@redis:6379/0"
+      DATABASE_URL:            "postgresql://payshield:${POSTGRES_PASSWORD}@postgres:5432/payshield"
+      NEO4J_URI:               bolt://neo4j:7687
+      NEO4J_USER:              neo4j
+      NEO4J_PASSWORD:          "${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set}"
+      APP_ENV:                 "${APP_ENV:-production}"
+      ENVIRONMENT:             "${ENVIRONMENT:-production}"
+      LOG_LEVEL:               "${LOG_LEVEL:-INFO}"
+      PAYSHIELD_MODEL_DIR:     /app/models
+    volumes:
+      - models_data:/app/models
+    networks: [payshield-net]
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      redpanda-init:
+        condition: service_completed_successfully
+      neo4j-init:
+        condition: service_completed_successfully
+      models-init:
+        condition: service_completed_successfully
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+  airflow:
+    build:
+      context: ../payshield-backend  # backend root — Dockerfile COPYs app/ core/ config/ alembic/ from here
+      dockerfile: ai_orchestrator/Dockerfile
+    image: nonashield/airflow:latest
+    container_name: payshield-airflow
+    environment:
+      AIRFLOW__CORE__EXECUTOR:                    LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN:        "postgresql+psycopg2://payshield:${POSTGRES_PASSWORD}@postgres:5432/payshield_airflow"
+      AIRFLOW__CORE__FERNET_KEY:                  "${AIRFLOW_FERNET_KEY:?AIRFLOW_FERNET_KEY must be set}"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      AIRFLOW__CORE__LOAD_EXAMPLES:               "false"
+      AIRFLOW__API__AUTH_BACKENDS:                airflow.api.auth.backend.basic_auth
+      AIRFLOW__WEBSERVER__SECRET_KEY:             "${AIRFLOW_SECRET_KEY:?AIRFLOW_SECRET_KEY must be set}"
+      _AIRFLOW_WWW_USER_USERNAME:                 "${AIRFLOW_ADMIN_USER:-admin}"
+      _AIRFLOW_WWW_USER_PASSWORD:                 "${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD must be set}"
+      DATABASE_URL:               "postgresql://payshield:${POSTGRES_PASSWORD}@postgres:5432/payshield"
+      REDIS_URL:                  "redis://:${REDIS_PASSWORD:-}@redis:6379/0"
+      KAFKA_BOOTSTRAP_SERVERS:    redpanda:29092
+      NEO4J_URI:                  bolt://neo4j:7687
+      NEO4J_PASSWORD:             "${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set}"
+      OLLAMA_URL:                 http://ollama:11434
+      AWS_ENDPOINT_URL:           http://minio:9000
+      AWS_S3_FORCE_PATH_STYLE:    "true"
+      AWS_ACCESS_KEY_ID:          "${MINIO_ROOT_USER:-payshield}"
+      AWS_SECRET_ACCESS_KEY:      "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}"
+      ENVIRONMENT:                "${ENVIRONMENT:-production}"
+      # Shares the persistent models volume with backend so nightly-trained
+      # models land where the serving path reads them and survive recreates.
+      PAYSHIELD_MODEL_DIR:        /app/models
+    volumes:
+      - models_data:/app/models
+    networks: [payshield-net]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      models-init:
+        condition: service_completed_successfully
+    command: >
+      bash -c "
+        airflow db migrate &&
+        airflow users create --username admin --firstname Admin --lastname User
+          --role Admin --email admin@nonashield.local
+          --password $${AIRFLOW_ADMIN_PASSWORD} 2>/dev/null || true &&
+        airflow scheduler &
+        airflow webserver
+      "
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 300m
+
+  # One-shot: prepare the shared models volume so backend (uid 1001),
+  # processor, and airflow (all different non-root UIDs) can read/write model
+  # artifacts. Runs on a full `docker compose up`; CI --no-deps redeploys reuse
+  # the already-prepared volume (the chmod persists with the volume).
+  models-init:
+    image: busybox:1.36
+    container_name: payshield-models-init
+    command: sh -c "mkdir -p /models && chmod 0777 /models && echo 'models volume ready'"
+    volumes:
+      - models_data:/models
+    networks: [payshield-net]
+    restart: "no"
+    logging: *default-logging
