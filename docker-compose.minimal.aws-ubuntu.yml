@@ -1,20 +1,29 @@
 # =============================================================================
-# NonaShield — Minimal Production Stack (4 services) — AWS EC2, Ubuntu AMI,
-# via install/install-ubuntu.sh
+# NonaShield — Minimal Stack (4 services) — AWS EC2 running UBUNTU (not
+# Amazon Linux), via install/install-ubuntu.sh
+# For AWS EC2 running Amazon Linux, see payshield-backend/deploy.sh instead
+# (the real, months-proven production/demo deployment) — do NOT use this
+# file for that instance.
 #
 # ┌─────────────────────────────────────────────────────────────────────────┐
-# │ NOT the same thing as payshield-backend/deploy.sh                        │
-# │ deploy.sh is a separate, already-running, bespoke script for one fixed  │
-# │ EC2 instance (Amazon Linux 2023, AWS Secrets Manager, .env.demo.local,   │
-# │ /opt/nonashield) -- not touched or superseded by this file. See         │
-# │ docker-compose.full.aws.yml's header for the full explanation. This     │
-# │ file is for a NEW, separate, Ubuntu-AMI EC2 instance via                │
-# │ install-ubuntu.sh, not the existing demo instance deploy.sh manages.    │
+# │ WHY TWO AWS PATHS EXIST — see docker-compose.full.aws-ubuntu.yml's       │
+# │ header for the full explanation. Short version:                         │
+# │                                                                           │
+# │ payshield-backend/deploy.sh (Amazon Linux) — the ACTUAL, ALREADY-        │
+# │   RUNNING deployment, live for months. dnf/firewalld/ec2-user, AWS      │
+# │   Secrets Manager, .env.demo.local, /opt/nonashield. NOT touched or     │
+# │   superseded by this file.                                              │
+# │                                                                           │
+# │ install-ubuntu.sh + THIS file (Ubuntu) — a separate, generic, reusable  │
+# │   installer for a NEW customer's own Ubuntu-AMI EC2 instance.           │
+# │   apt/ufw/"ubuntu" user, plain .env, /opt/payshield.                    │
+# │                                                                           │
+# │ Never run install-ubuntu.sh against the instance deploy.sh manages.     │
 # └─────────────────────────────────────────────────────────────────────────┘
 #
 # Copy of payshield-backend/docker-compose.minimal.yml (untouched, proven,
 # committed separately). Self-hosted on a single EC2 instance, same as
-# docker-compose.full.aws.yml — no managed AWS services (RDS/ElastiCache/S3)
+# docker-compose.full.aws-ubuntu.yml — no managed AWS services (RDS/ElastiCache/S3)
 # substituted here. Deliberately leaner than the full stack at the
 # APPLICATION level, not just the compose level: ENABLE_KAFKA_AUDIT=false
 # below means the backend itself never tries to reach Redpanda, so no
@@ -37,9 +46,9 @@
 #
 # Quick start (run on the EC2 instance itself, e.g. over SSH, from install/):
 #   cp ../payshield-backend/.env.example ../payshield-backend/.env   # fill in secrets
-#   docker compose -f docker-compose.minimal.aws.yml --env-file ../payshield-backend/.env up -d --build
-#   docker compose -f docker-compose.minimal.aws.yml --env-file ../payshield-backend/.env down        # keep data
-#   docker compose -f docker-compose.minimal.aws.yml --env-file ../payshield-backend/.env down -v     # wipe data
+#   docker compose -f docker-compose.minimal.aws-ubuntu.yml --env-file ../payshield-backend/.env up -d --build
+#   docker compose -f docker-compose.minimal.aws-ubuntu.yml --env-file ../payshield-backend/.env down        # keep data
+#   docker compose -f docker-compose.minimal.aws-ubuntu.yml --env-file ../payshield-backend/.env down -v     # wipe data
 #
 # This file additionally requires (not needed by the full stack, since it
 # defaults them there): JWT_PRIVATE_KEY_PEM, JWT_PUBLIC_KEY_PEM, CSRF_SECRET,

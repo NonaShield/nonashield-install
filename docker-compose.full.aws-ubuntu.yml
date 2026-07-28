@@ -1,21 +1,29 @@
 # =============================================================================
-# NonaShield — FULL Stack (AWS EC2, Ubuntu AMI, via install/install-ubuntu.sh)
+# NonaShield — FULL Stack — AWS EC2 running UBUNTU (not Amazon Linux)
+# For AWS EC2 running Amazon Linux, see payshield-backend/deploy.sh instead
+# (the real, months-proven production/demo deployment) — do NOT use this file
+# for that instance. This file is for install/install-ubuntu.sh only.
 #
 # ┌─────────────────────────────────────────────────────────────────────────┐
-# │ NOT the same thing as payshield-backend/deploy.sh                        │
+# │ WHY TWO AWS PATHS EXIST — read before touching either                    │
 # │                                                                           │
-# │ deploy.sh is a SEPARATE, already-running, bespoke script for one         │
-# │ specific EC2 instance (a fixed Elastic IP set in deploy-config.sh) --    │
-# │ it targets Amazon Linux 2023 (dnf/firewalld/ec2-user), stores secrets    │
-# │ in AWS Secrets Manager, uses .env.demo.local (not .env), and installs    │
-# │ to /opt/nonashield (not /opt/payshield). It is demo-specific, fixed      │
-# │ credentials (BACKEND_API_KEY=ABCDEFGHI baked into a specific APK build), │
-# │ and is NOT touched or superseded by anything in this file or            │
-# │ install-ubuntu.sh. Do not merge these two paths or assume one replaces  │
-# │ the other -- they are two independently valid ways to run on EC2,       │
-# │ for two different purposes (deploy.sh = that one fixed demo instance;   │
-# │ install-ubuntu.sh + this file = generic, reusable, any new customer's   │
-# │ own Ubuntu-AMI EC2 instance).                                           │
+# │ payshield-backend/deploy.sh (Amazon Linux)                              │
+# │   The ACTUAL, ALREADY-RUNNING deployment — live in AWS for months.      │
+# │   Targets Amazon Linux 2023 (dnf/firewalld/ec2-user), stores secrets    │
+# │   in AWS Secrets Manager, uses .env.demo.local (not .env), installs to  │
+# │   /opt/nonashield (not /opt/payshield), fixed Elastic IP in             │
+# │   deploy-config.sh, demo-specific credentials (BACKEND_API_KEY=         │
+# │   ABCDEFGHI baked into a specific APK build). NOT touched or            │
+# │   superseded by anything in this file or install-ubuntu.sh.             │
+# │                                                                           │
+# │ install-ubuntu.sh + THIS file (Ubuntu)                                  │
+# │   A separate, generic, reusable installer for a NEW customer's own      │
+# │   Ubuntu-AMI EC2 instance (or any Ubuntu box, cloud or on-prem) --      │
+# │   apt/ufw/"ubuntu" user, plain .env, /opt/payshield.                    │
+# │                                                                           │
+# │ Never run install-ubuntu.sh against the instance deploy.sh manages, and │
+# │ never assume one path replaces the other -- pick based on which OS the  │
+# │ target EC2 instance is actually running.                                │
 # └─────────────────────────────────────────────────────────────────────────┘
 #
 # This IS docker-compose.yml — the canonical stack install/install-ubuntu.sh
@@ -26,7 +34,7 @@
 # is unchanged and remains the file install-ubuntu.sh's compose_up() actually
 # invokes by default.
 #
-# Complements docker-compose.minimal.aws.yml (which omits Ollama/Vault/
+# Complements docker-compose.minimal.aws-ubuntu.yml (which omits Ollama/Vault/
 # Airflow/Prometheus/Grafana — see that file's header for why each is safe
 # to skip, and for EC2-specific notes: Security Groups, Elastic IP + Route 53
 # + certbot for a real domain/TLS cert, EC2 metadata IP auto-detection).
@@ -58,9 +66,9 @@
 #
 # Quick start (run from install/, .env lives in payshield-backend/):
 #   cp ../payshield-backend/.env.example ../payshield-backend/.env   # fill in secrets
-#   docker compose -f docker-compose.full.aws.yml --env-file ../payshield-backend/.env up -d --build
-#   docker compose -f docker-compose.full.aws.yml --env-file ../payshield-backend/.env down        # keep data
-#   docker compose -f docker-compose.full.aws.yml --env-file ../payshield-backend/.env down -v     # wipe data
+#   docker compose -f docker-compose.full.aws-ubuntu.yml --env-file ../payshield-backend/.env up -d --build
+#   docker compose -f docker-compose.full.aws-ubuntu.yml --env-file ../payshield-backend/.env down        # keep data
+#   docker compose -f docker-compose.full.aws-ubuntu.yml --env-file ../payshield-backend/.env down -v     # wipe data
 # =============================================================================
 
 networks:
