@@ -92,7 +92,9 @@ services:
     container_name: payshield-nginx
     environment:
       PAYSHIELD_SERVER_NAME: "${PAYSHIELD_SERVER_NAME:-api.diimeai.com}"
+      APP_ENV: "${APP_ENV:-production}"
       EDGE_CONTEXT_HMAC_KEY: "${EDGE_CONTEXT_HMAC_KEY:?EDGE_CONTEXT_HMAC_KEY must be set (openssl rand -hex 32)}"
+      EDGE_INTERNAL_SECRET: "${EDGE_INTERNAL_SECRET:?EDGE_INTERNAL_SECRET must be set (openssl rand -hex 32) -- MUST match the backend value exactly}"
       REDIS_HOST:            redis
       REDIS_PORT:            "6379"
       REDIS_PASSWORD:        "${REDIS_PASSWORD:-}"
@@ -730,6 +732,7 @@ services:
 
       # Edge token HMAC — MUST match nginx value exactly
       EDGE_CONTEXT_HMAC_KEY: "${EDGE_CONTEXT_HMAC_KEY:?EDGE_CONTEXT_HMAC_KEY must be set}"
+      EDGE_INTERNAL_SECRET: "${EDGE_INTERNAL_SECRET:?EDGE_INTERNAL_SECRET must be set (openssl rand -hex 32) -- MUST match the nginx value exactly}"
 
       # Dashboard admin — used by the 20260602_add_dashboard_admins Alembic migration
       # to seed the first super_admin on first deployment (idempotent on re-runs).

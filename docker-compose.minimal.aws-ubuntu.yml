@@ -83,7 +83,9 @@ services:
     container_name: payshield-nginx
     environment:
       PAYSHIELD_SERVER_NAME: "${PAYSHIELD_SERVER_NAME:-api.diimeai.com}"
+      APP_ENV: "${APP_ENV:-production}"
       EDGE_CONTEXT_HMAC_KEY: "${EDGE_CONTEXT_HMAC_KEY:?EDGE_CONTEXT_HMAC_KEY must be set (openssl rand -hex 32)}"
+      EDGE_INTERNAL_SECRET: "${EDGE_INTERNAL_SECRET:?EDGE_INTERNAL_SECRET must be set (openssl rand -hex 32) -- MUST match the backend value exactly}"
       REDIS_HOST:            redis
       REDIS_PORT:            "6379"
       REDIS_PASSWORD:        "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
