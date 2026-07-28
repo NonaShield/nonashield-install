@@ -1,5 +1,16 @@
 # =============================================================================
-# NonaShield — Minimal Production Stack (4 services) — AWS EC2, Ubuntu AMI
+# NonaShield — Minimal Production Stack (4 services) — AWS EC2, Ubuntu AMI,
+# via install/install-ubuntu.sh
+#
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ NOT the same thing as payshield-backend/deploy.sh                        │
+# │ deploy.sh is a separate, already-running, bespoke script for one fixed  │
+# │ EC2 instance (Amazon Linux 2023, AWS Secrets Manager, .env.demo.local,   │
+# │ /opt/nonashield) -- not touched or superseded by this file. See         │
+# │ docker-compose.full.aws.yml's header for the full explanation. This     │
+# │ file is for a NEW, separate, Ubuntu-AMI EC2 instance via                │
+# │ install-ubuntu.sh, not the existing demo instance deploy.sh manages.    │
+# └─────────────────────────────────────────────────────────────────────────┘
 #
 # Copy of payshield-backend/docker-compose.minimal.yml (untouched, proven,
 # committed separately). Self-hosted on a single EC2 instance, same as

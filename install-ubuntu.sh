@@ -3,11 +3,22 @@
 # PayShield — One-Step AWS Ubuntu Installer
 # Tested on: Ubuntu 22.04 LTS / 24.04 LTS (EC2, t3.medium or larger)
 #
+# NOT the same thing as payshield-backend/deploy.sh. deploy.sh is a separate,
+# already-running, bespoke script for one specific EC2 instance (a fixed
+# Elastic IP in deploy-config.sh) — it targets Amazon Linux 2023
+# (dnf/firewalld/ec2-user), stores secrets in AWS Secrets Manager, uses
+# .env.demo.local, and installs to /opt/nonashield. This script is a
+# different, generic, reusable tool for a NEW Ubuntu-AMI EC2 instance (or
+# any Ubuntu box, cloud or on-prem) — default user is "ubuntu", not
+# "ec2-user" (that's Amazon Linux's default user, not Ubuntu's). Neither
+# script touches or supersedes the other; do not run this against the
+# instance deploy.sh manages.
+#
 # Minimum recommended instance:
 #   t3.large (2 vCPU, 8 GB RAM) for demo  |  c5.2xlarge for production
 #   50 GB root EBS (gp3) — Ollama LLaMA3 model alone is ~4 GB
 #
-# Run as the ubuntu (or ec2-user) with sudo rights:
+# Run as the ubuntu user with sudo rights:
 #   curl -fsSL <raw-url>/install-ubuntu.sh | sudo bash
 #   -- OR --
 #   sudo bash install/install-ubuntu.sh
@@ -175,7 +186,10 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
 
     systemctl enable --now docker
 
-    # Allow ubuntu/ec2-user to run docker without sudo
+    # Allow the deploying user to run docker without sudo. Falls back to
+    # "ubuntu" (this script's target AMI default user), NOT "ec2-user" --
+    # that's Amazon Linux's default user, a different AMI this script
+    # doesn't target (see header note on deploy.sh).
     DEPLOY_USER="${SUDO_USER:-ubuntu}"
     usermod -aG docker "$DEPLOY_USER" || true
 

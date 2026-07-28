@@ -1,8 +1,25 @@
 # =============================================================================
-# NonaShield — FULL Stack (AWS EC2, Ubuntu AMI)
+# NonaShield — FULL Stack (AWS EC2, Ubuntu AMI, via install/install-ubuntu.sh)
+#
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ NOT the same thing as payshield-backend/deploy.sh                        │
+# │                                                                           │
+# │ deploy.sh is a SEPARATE, already-running, bespoke script for one         │
+# │ specific EC2 instance (a fixed Elastic IP set in deploy-config.sh) --    │
+# │ it targets Amazon Linux 2023 (dnf/firewalld/ec2-user), stores secrets    │
+# │ in AWS Secrets Manager, uses .env.demo.local (not .env), and installs    │
+# │ to /opt/nonashield (not /opt/payshield). It is demo-specific, fixed      │
+# │ credentials (BACKEND_API_KEY=ABCDEFGHI baked into a specific APK build), │
+# │ and is NOT touched or superseded by anything in this file or            │
+# │ install-ubuntu.sh. Do not merge these two paths or assume one replaces  │
+# │ the other -- they are two independently valid ways to run on EC2,       │
+# │ for two different purposes (deploy.sh = that one fixed demo instance;   │
+# │ install-ubuntu.sh + this file = generic, reusable, any new customer's   │
+# │ own Ubuntu-AMI EC2 instance).                                           │
+# └─────────────────────────────────────────────────────────────────────────┘
 #
 # This IS docker-compose.yml — the canonical stack install/install-ubuntu.sh
-# already deploys to EC2 in production today (Tested on: Ubuntu 22.04 LTS /
+# deploys to a fresh Ubuntu-AMI EC2 instance (Tested on: Ubuntu 22.04 LTS /
 # 24.04 LTS, t3.medium+ for demo, c5.2xlarge+ for production — see that
 # script's header). Kept as an explicitly-named copy so all eight platform x
 # tier combinations are discoverable by filename; docker-compose.yml itself
