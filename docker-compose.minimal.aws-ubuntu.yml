@@ -208,6 +208,16 @@ services:
       UVICORN_HOST:    "0.0.0.0"
       UVICORN_PORT:    "8000"
 
+      # Secret sourcing (2026-07 fix): USE_AWS_SM was never listed in
+      # this environment: block, so a customer's own .env setting was
+      # silently dropped (no env_file: on this service -- only vars
+      # explicitly listed here reach the container). Without this line,
+      # app/config/settings.py always saw its own hardcoded "true"
+      # default regardless of what a non-AWS customer set. Default kept
+      # at "true" for backward compatibility with any existing .env
+      # that predates this var; .env.example itself defaults to false.
+      USE_AWS_SM: "${USE_AWS_SM:-true}"
+
       # API security
       API_SECRET_KEY:                   "${API_SECRET_KEY:?API_SECRET_KEY must be set}"
       JWT_SECRET:                       "${JWT_SECRET:?JWT_SECRET must be set}"
