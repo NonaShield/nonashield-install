@@ -349,7 +349,14 @@ generate_env() {
     sed -i "s/payshield_neo4j/${NEO4J_PASS}/g"            "$env_file"
     sed -i "s/change-me-in-production-32-chars!!/${API_KEY}/g"      "$env_file"
     sed -i "s/change-me-jwt-secret-32-chars!!!/${JWT_SECRET}/g"     "$env_file"
-    sed -i "s/change-me-admin-api-key/${ADMIN_KEY}/g"               "$env_file"
+    # BUG FIX (2026-07): this pattern never matched anything -- .env.example's
+    # actual placeholder is `BACKEND_API_KEY=ABCDEFGHI`, not the literal string
+    # "change-me-admin-api-key", so ADMIN_KEY was generated above and silently
+    # discarded on every install. Every fresh deployment kept the well-known,
+    # publicly-documented demo key (see app/docs/openapi_config.py) sitting in
+    # its real .env. Matched by key name (robust to the placeholder value ever
+    # changing), mirroring the anchored CSRF_SECRET replacement below.
+    sed -i "s/^BACKEND_API_KEY=.*/BACKEND_API_KEY=${ADMIN_KEY}/"     "$env_file"
     sed -i "s|<base64-encoded-32-byte-key>|${SIGNING_KEY}|g"        "$env_file"
     sed -i "s|change-me-fernet-key-base64-encoded=|${FERNET_KEY}|g" "$env_file"
     sed -i "s/change-me-webserver-secret/${AIRFLOW_WS}/g"           "$env_file"

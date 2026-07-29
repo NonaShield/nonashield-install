@@ -209,7 +209,14 @@ function Ensure-EnvFile {
     $content = $content -replace "payshield_neo4j",            $neo4jPass
     $content = $content -replace "change-me-in-production-32-chars!!", $apiKey
     $content = $content -replace "change-me-jwt-secret-32-chars!!!",   $jwtSecret
-    $content = $content -replace "change-me-admin-api-key",            $adminKey
+    # BUG FIX (2026-07): this pattern never matched anything -- .env.example's
+    # actual placeholder is `BACKEND_API_KEY=ABCDEFGHI`, not the literal string
+    # "change-me-admin-api-key", so $adminKey was generated above and silently
+    # discarded on every install. Every fresh deployment kept the well-known,
+    # publicly-documented demo key (see app/docs/openapi_config.py) sitting in
+    # its real .env.example-derived .env. Matched by key name instead (robust
+    # to the placeholder value ever changing).
+    $content = $content -replace "(?m)^BACKEND_API_KEY=.*", "BACKEND_API_KEY=$adminKey"
     $content = $content -replace "<base64-encoded-32-byte-key>",       $signingKey
     $content = $content -replace "change-me-fernet-key-base64-encoded=", $fernetKey
     $content = $content -replace "change-me-webserver-secret",          $airflowWS
