@@ -1,5 +1,5 @@
 # =============================================================================
-# PayShield — One-Step Windows Installer
+# PayShield -- One-Step Windows Installer
 # Installs ALL prerequisites, configures environment, and starts the full stack.
 #
 # Run from PowerShell (Administrator) in the project root:
@@ -10,7 +10,7 @@
 #   1. Checks Windows version and enables WSL2 if missing
 #   2. Installs Docker Desktop via winget (if not present)
 #   3. Installs Git for Windows (if not present)
-#   4. Fixes shell-script line endings (CRLF → LF)
+#   4. Fixes shell-script line endings (CRLF -> LF)
 #   5. Generates a .env with cryptographically-secure secrets
 #   6. Pulls all Docker images and starts the 13-layer stack
 #   7. Waits for infrastructure health checks to pass
@@ -37,7 +37,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# ── Colour helpers ────────────────────────────────────────────────────────────
+# -- Colour helpers ------------------------------------------------------------
 function Write-Step  ($msg) { if (-not $NoColor) { Write-Host "  ==> $msg" -ForegroundColor Cyan   } else { Write-Host "  ==> $msg" } }
 function Write-OK    ($msg) { if (-not $NoColor) { Write-Host "   ok  $msg" -ForegroundColor Green  } else { Write-Host "   ok  $msg" } }
 function Write-Warn  ($msg) { if (-not $NoColor) { Write-Host " WARN  $msg" -ForegroundColor Yellow } else { Write-Host " WARN  $msg" } }
@@ -50,9 +50,9 @@ function Write-Banner($msg) {
     Write-Host ""
 }
 
-# ── Locate project root (script lives in install\) ───────────────────────────
+# -- Locate project root (script lives in install\) ---------------------------
 $SCRIPT_DIR  = Split-Path -Parent $MyInvocation.MyCommand.Path
-$PROJECT_ROOT = Split-Path -Parent $SCRIPT_DIR          # …/Code
+$PROJECT_ROOT = Split-Path -Parent $SCRIPT_DIR          # .../Code
 $BACKEND_DIR  = Join-Path $PROJECT_ROOT "payshield-backend"
 $NGINX_DIR    = Join-Path $PROJECT_ROOT "nginx"
 
@@ -81,7 +81,7 @@ function Ensure-WSL2 {
         Write-OK "WSL2 already enabled"
         return
     }
-    Write-Warn "WSL2 not enabled — enabling now (may require reboot)"
+    Write-Warn "WSL2 not enabled -- enabling now (may require reboot)"
     Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart | Out-Null
     Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart | Out-Null
     wsl --set-default-version 2 2>&1 | Out-Null
@@ -90,7 +90,7 @@ function Ensure-WSL2 {
 
 function Ensure-Winget {
     if (Get-Command winget -ErrorAction SilentlyContinue) { return }
-    Write-Warn "winget not found — downloading App Installer..."
+    Write-Warn "winget not found -- downloading App Installer..."
     $url  = "https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
     $dest = "$env:TEMP\AppInstaller.msixbundle"
     Invoke-WebRequest $url -OutFile $dest -UseBasicParsing
@@ -105,14 +105,14 @@ function Ensure-DockerDesktop {
         Write-OK "Docker found: $v"
         return
     }
-    Write-Warn "Docker Desktop not found — installing via winget..."
+    Write-Warn "Docker Desktop not found -- installing via winget..."
     Ensure-Winget
     winget install --id Docker.DockerDesktop --silent --accept-package-agreements --accept-source-agreements
     if ($LASTEXITCODE -ne 0) {
         Write-Err "winget install failed. Download manually: https://docs.docker.com/desktop/windows/"
         exit 1
     }
-    Write-OK "Docker Desktop installed — please start Docker Desktop and re-run this script"
+    Write-OK "Docker Desktop installed -- please start Docker Desktop and re-run this script"
     Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe" -ErrorAction SilentlyContinue
     Write-Host ""
     Write-Host "  Docker Desktop is starting. Wait until the whale icon appears in the system tray," -ForegroundColor Yellow
@@ -127,7 +127,7 @@ function Ensure-Git {
         Write-OK "Git found: $v"
         return
     }
-    Write-Warn "Git not found — installing via winget..."
+    Write-Warn "Git not found -- installing via winget..."
     Ensure-Winget
     winget install --id Git.Git --silent --accept-package-agreements --accept-source-agreements
     $env:PATH += ";C:\Program Files\Git\cmd"
@@ -179,7 +179,7 @@ function New-FernetKey {
 function Ensure-EnvFile {
     Write-Step "Checking .env file..."
     if (Test-Path ".env") {
-        Write-OK ".env already exists — skipping generation"
+        Write-OK ".env already exists -- skipping generation"
         return
     }
     if (-not (Test-Path ".env.example")) {
@@ -231,7 +231,7 @@ function Ensure-EnvFile {
 
     Write-OK ".env written with fresh secrets"
     Write-Host ""
-    Write-Host "  IMPORTANT — save these generated values somewhere safe:" -ForegroundColor Yellow
+    Write-Host "  IMPORTANT -- save these generated values somewhere safe:" -ForegroundColor Yellow
     Write-Host "    Postgres password : $pgPass"       -ForegroundColor White
     Write-Host "    MinIO password    : $minioPass"    -ForegroundColor White
     Write-Host "    Grafana password  : $grafanaPass"  -ForegroundColor White
@@ -240,7 +240,7 @@ function Ensure-EnvFile {
 }
 
 # =============================================================================
-# SHELL SCRIPT LINE-ENDING FIX (CRLF → LF)
+# SHELL SCRIPT LINE-ENDING FIX (CRLF -> LF)
 # =============================================================================
 
 function Fix-LineEndings {
@@ -275,7 +275,7 @@ function Invoke-Up {
     docker compose up --build -d
 
     if ($LASTEXITCODE -ne 0) {
-        Write-Err "docker compose up failed — check logs: docker compose logs"
+        Write-Err "docker compose up failed -- check logs: docker compose logs"
         exit 1
     }
 
@@ -296,7 +296,7 @@ function Invoke-Up {
     }
 
     if ($allHealthy) { Write-OK "All infrastructure services healthy" }
-    else             { Write-Warn "Some services may still be initialising — check with: docker compose ps" }
+    else             { Write-Warn "Some services may still be initialising -- check with: docker compose ps" }
 
     Write-Step "Waiting for backend API to come up (up to 2 minutes)..."
     $deadline = (Get-Date).AddSeconds(120)
@@ -311,7 +311,7 @@ function Invoke-Up {
 
     Write-Banner "PayShield is READY"
     Write-Host "  Service                  URL" -ForegroundColor White
-    Write-Host "  ─────────────────────────────────────────────────────────" -ForegroundColor DarkGray
+    Write-Host "  ---------------------------------------------------------" -ForegroundColor DarkGray
     Write-Host "  Backend API (Swagger)    http://localhost:8000/docs" -ForegroundColor Cyan
     Write-Host "  Backend Health           http://localhost:8000/health" -ForegroundColor Cyan
     Write-Host "  Go Ingest Service        http://localhost:8080" -ForegroundColor Cyan
@@ -385,9 +385,9 @@ function Invoke-Health {
     foreach ($s in $services) {
         try {
             $r = Invoke-WebRequest $s.url -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
-            Write-OK "$($s.name) — HTTP $($r.StatusCode)"
+            Write-OK "$($s.name) -- HTTP $($r.StatusCode)"
         } catch {
-            Write-Warn "$($s.name) — NOT reachable ($($s.url))"
+            Write-Warn "$($s.name) -- NOT reachable ($($s.url))"
         }
     }
     Write-Host ""
@@ -405,11 +405,11 @@ function Invoke-Update {
 # MAIN
 # =============================================================================
 
-Write-Banner "PayShield — One-Step Windows Installer"
+Write-Banner "PayShield -- One-Step Windows Installer"
 
 if (-not $SkipPrereqs -and $Action -in @("up","deploy")) {
     if (-not (Test-Administrator)) {
-        Write-Warn "Not running as Administrator — prerequisite installation may be skipped."
+        Write-Warn "Not running as Administrator -- prerequisite installation may be skipped."
         Write-Warn "Re-run as Administrator for automatic Docker / Git installation."
     }
     Ensure-WSL2

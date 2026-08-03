@@ -1,9 +1,9 @@
 # =============================================================================
-# PayShield — One-Step Windows Installer (MINIMAL tier)
+# PayShield -- One-Step Windows Installer (MINIMAL tier)
 # Installs ALL prerequisites, configures environment, and starts the minimal
 # stack: nginx + backend + ingestion + processor + postgres + redis +
 # redpanda + neo4j + minio + mqtt. Omits Ollama, Vault, Airflow, Prometheus,
-# and Grafana — see docker-compose.minimal.windows.yml's own header comment
+# and Grafana -- see docker-compose.minimal.windows.yml's own header comment
 # for exactly why each is confirmed safe to skip (advisory-only / no
 # depends_on anywhere in the stack / documented nginx-upstream incident for
 # Grafana specifically).
@@ -22,13 +22,13 @@
 #   1. Checks Windows version and enables WSL2 if missing
 #   2. Installs Docker Desktop via winget (if not present)
 #   3. Installs Git for Windows (if not present)
-#   4. Fixes shell-script line endings (CRLF → LF)
+#   4. Fixes shell-script line endings (CRLF -> LF)
 #   5. Generates a .env with cryptographically-secure secrets
 #   6. Pulls all Docker images and starts the minimal-tier stack
 #   7. Waits for infrastructure health checks to pass
 #   8. Prints all service URLs
 #
-# Prerequisites this cannot skip (same as the full stack — see
+# Prerequisites this cannot skip (same as the full stack -- see
 # docker-compose.minimal.windows.yml's header for details):
 #   SSL_DIR, GEOIP_DIR must be set in .env / your environment before "up".
 #
@@ -53,7 +53,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# ── Colour helpers ────────────────────────────────────────────────────────────
+# -- Colour helpers ------------------------------------------------------------
 function Write-Step  ($msg) { if (-not $NoColor) { Write-Host "  ==> $msg" -ForegroundColor Cyan   } else { Write-Host "  ==> $msg" } }
 function Write-OK    ($msg) { if (-not $NoColor) { Write-Host "   ok  $msg" -ForegroundColor Green  } else { Write-Host "   ok  $msg" } }
 function Write-Warn  ($msg) { if (-not $NoColor) { Write-Host " WARN  $msg" -ForegroundColor Yellow } else { Write-Host " WARN  $msg" } }
@@ -66,9 +66,9 @@ function Write-Banner($msg) {
     Write-Host ""
 }
 
-# ── Locate project root (script lives in install\) ───────────────────────────
+# -- Locate project root (script lives in install\) ---------------------------
 $SCRIPT_DIR   = Split-Path -Parent $MyInvocation.MyCommand.Path
-$PROJECT_ROOT = Split-Path -Parent $SCRIPT_DIR          # …/Code
+$PROJECT_ROOT = Split-Path -Parent $SCRIPT_DIR          # .../Code
 $BACKEND_DIR  = Join-Path $PROJECT_ROOT "payshield-backend"
 $NGINX_DIR    = Join-Path $PROJECT_ROOT "nginx"
 $ComposeFile  = Join-Path $SCRIPT_DIR "docker-compose.minimal.windows.yml"
@@ -110,7 +110,7 @@ function Ensure-WSL2 {
         Write-OK "WSL2 already enabled"
         return
     }
-    Write-Warn "WSL2 not enabled — enabling now (may require reboot)"
+    Write-Warn "WSL2 not enabled -- enabling now (may require reboot)"
     Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart | Out-Null
     Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart | Out-Null
     wsl --set-default-version 2 2>&1 | Out-Null
@@ -119,7 +119,7 @@ function Ensure-WSL2 {
 
 function Ensure-Winget {
     if (Get-Command winget -ErrorAction SilentlyContinue) { return }
-    Write-Warn "winget not found — downloading App Installer..."
+    Write-Warn "winget not found -- downloading App Installer..."
     $url  = "https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
     $dest = "$env:TEMP\AppInstaller.msixbundle"
     Invoke-WebRequest $url -OutFile $dest -UseBasicParsing
@@ -134,14 +134,14 @@ function Ensure-DockerDesktop {
         Write-OK "Docker found: $v"
         return
     }
-    Write-Warn "Docker Desktop not found — installing via winget..."
+    Write-Warn "Docker Desktop not found -- installing via winget..."
     Ensure-Winget
     winget install --id Docker.DockerDesktop --silent --accept-package-agreements --accept-source-agreements
     if ($LASTEXITCODE -ne 0) {
         Write-Err "winget install failed. Download manually: https://docs.docker.com/desktop/windows/"
         exit 1
     }
-    Write-OK "Docker Desktop installed — please start Docker Desktop and re-run this script"
+    Write-OK "Docker Desktop installed -- please start Docker Desktop and re-run this script"
     Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe" -ErrorAction SilentlyContinue
     Write-Host ""
     Write-Host "  Docker Desktop is starting. Wait until the whale icon appears in the system tray," -ForegroundColor Yellow
@@ -156,7 +156,7 @@ function Ensure-Git {
         Write-OK "Git found: $v"
         return
     }
-    Write-Warn "Git not found — installing via winget..."
+    Write-Warn "Git not found -- installing via winget..."
     Ensure-Winget
     winget install --id Git.Git --silent --accept-package-agreements --accept-source-agreements
     $env:PATH += ";C:\Program Files\Git\cmd"
@@ -208,7 +208,7 @@ function New-FernetKey {
 function Ensure-EnvFile {
     Write-Step "Checking .env file..."
     if (Test-Path ".env") {
-        Write-OK ".env already exists — skipping generation"
+        Write-OK ".env already exists -- skipping generation"
         return
     }
     if (-not (Test-Path ".env.example")) {
@@ -290,18 +290,18 @@ function Ensure-EnvFile {
 
     Write-OK ".env written with fresh secrets"
     Write-Host ""
-    Write-Host "  IMPORTANT — save these generated values somewhere safe:" -ForegroundColor Yellow
+    Write-Host "  IMPORTANT -- save these generated values somewhere safe:" -ForegroundColor Yellow
     Write-Host "    Postgres password : $pgPass"       -ForegroundColor White
     Write-Host "    MinIO password    : $minioPass"    -ForegroundColor White
     Write-Host "    Admin API key     : $adminKey"     -ForegroundColor White
     Write-Host ""
     if (-not $jwtKeysOk) {
-        Write-Warn "openssl not found (Git for Windows provides it) — JWT_PRIVATE_KEY_PEM /"
+        Write-Warn "openssl not found (Git for Windows provides it) -- JWT_PRIVATE_KEY_PEM /"
         Write-Warn "JWT_PUBLIC_KEY_PEM were NOT generated. Generate manually and add to .env:"
         Write-Warn "  openssl genrsa -out jwt_private.pem 2048"
         Write-Warn "  openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem"
     }
-    Write-Warn "SSL_DIR and GEOIP_DIR are NOT auto-generated — set them in .env"
+    Write-Warn "SSL_DIR and GEOIP_DIR are NOT auto-generated -- set them in .env"
     Write-Warn "yourself before 'up'. See docker-compose.minimal.windows.yml's"
     Write-Warn "header comment for how to generate a self-signed cert and where"
     Write-Warn "to get a free MaxMind GeoLite2 license."
@@ -309,7 +309,7 @@ function Ensure-EnvFile {
 }
 
 # =============================================================================
-# SHELL SCRIPT LINE-ENDING FIX (CRLF → LF)
+# SHELL SCRIPT LINE-ENDING FIX (CRLF -> LF)
 # =============================================================================
 
 function Fix-LineEndings {
@@ -344,7 +344,7 @@ function Invoke-Up {
     Invoke-Compose up --build -d
 
     if ($LASTEXITCODE -ne 0) {
-        Write-Err "docker compose up failed — check logs: .\install\install-windows-minimal.ps1 -Action logs"
+        Write-Err "docker compose up failed -- check logs: .\install\install-windows-minimal.ps1 -Action logs"
         exit 1
     }
 
@@ -367,7 +367,7 @@ function Invoke-Up {
     }
 
     if ($allHealthy) { Write-OK "All infrastructure services healthy" }
-    else             { Write-Warn "Some services may still be initialising — check with: .\install\install-windows-minimal.ps1 -Action status" }
+    else             { Write-Warn "Some services may still be initialising -- check with: .\install\install-windows-minimal.ps1 -Action status" }
 
     Write-Step "Waiting for backend API to come up (up to 2 minutes)..."
     $deadline = (Get-Date).AddSeconds(120)
@@ -382,12 +382,12 @@ function Invoke-Up {
 
     Write-Banner "PayShield (minimal tier) is READY"
     Write-Host "  Service                  URL" -ForegroundColor White
-    Write-Host "  ─────────────────────────────────────────────────────────" -ForegroundColor DarkGray
+    Write-Host "  ---------------------------------------------------------" -ForegroundColor DarkGray
     Write-Host "  Backend API (Swagger)    https://localhost/docs" -ForegroundColor Cyan
     Write-Host "  Backend Health           https://localhost/health" -ForegroundColor Cyan
     Write-Host "  SOC Dashboard            https://localhost/dashboard" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  Not part of this tier — nginx, backend, postgres, redis only" -ForegroundColor DarkGray
+    Write-Host "  Not part of this tier -- nginx, backend, postgres, redis only" -ForegroundColor DarkGray
     Write-Host "  (use .\install\install-windows.ps1 for the full stack):" -ForegroundColor DarkGray
     Write-Host "    Neo4j, MinIO, Redpanda/Kafka, AI Fraud Advisory (Ollama)," -ForegroundColor DarkGray
     Write-Host "    Airflow, Prometheus, Grafana, Vault UI" -ForegroundColor DarkGray
@@ -453,9 +453,9 @@ function Invoke-Health {
     foreach ($s in $services) {
         try {
             $r = Invoke-WebRequest $s.url -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
-            Write-OK "$($s.name) — HTTP $($r.StatusCode)"
+            Write-OK "$($s.name) -- HTTP $($r.StatusCode)"
         } catch {
-            Write-Warn "$($s.name) — NOT reachable ($($s.url))"
+            Write-Warn "$($s.name) -- NOT reachable ($($s.url))"
         }
     }
     Write-Host ""
@@ -473,11 +473,11 @@ function Invoke-Update {
 # MAIN
 # =============================================================================
 
-Write-Banner "PayShield — One-Step Windows Installer (MINIMAL tier)"
+Write-Banner "PayShield -- One-Step Windows Installer (MINIMAL tier)"
 
 if (-not $SkipPrereqs -and $Action -in @("up","deploy")) {
     if (-not (Test-Administrator)) {
-        Write-Warn "Not running as Administrator — prerequisite installation may be skipped."
+        Write-Warn "Not running as Administrator -- prerequisite installation may be skipped."
         Write-Warn "Re-run as Administrator for automatic Docker / Git installation."
     }
     Ensure-WSL2
