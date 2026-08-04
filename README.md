@@ -62,6 +62,10 @@ Amazon Linux always means `deploy.sh`; Ubuntu always means this repo.
 
 ## Quick start
 
+For the exact step-by-step sequence to run on a **new machine** (path
+verification, clearing a stale `.env`, then the install command itself), see
+[SETUP.md](SETUP.md).
+
 ### Windows (PowerShell, as Administrator)
 
 ```powershell
