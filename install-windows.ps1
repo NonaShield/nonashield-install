@@ -53,13 +53,37 @@ function Write-Banner($msg) {
 # ── Locate project root (script lives in install\) ───────────────────────────
 $SCRIPT_DIR  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PROJECT_ROOT = Split-Path -Parent $SCRIPT_DIR          # …/Code
-$BACKEND_DIR  = Join-Path $PROJECT_ROOT "payshield-backend"
+# The GitHub repo is "nonashield-backend" (org: NonaShield) -- a plain
+# `git clone` produces a folder with that name. Everything inside the repo
+# (env vars, docker service/container names, .env.example) still says
+# "payshield" from before the rebrand, so this and every other install
+# script historically hardcoded "payshield-backend" as the sibling folder
+# name. Checking both means a fresh clone of the real repo works with zero
+# manual rename step.
+if (Test-Path (Join-Path $PROJECT_ROOT "payshield-backend")) {
+    $BACKEND_DIR = Join-Path $PROJECT_ROOT "payshield-backend"
+} else {
+    $BACKEND_DIR = Join-Path $PROJECT_ROOT "nonashield-backend"
+}
 $NGINX_DIR    = Join-Path $PROJECT_ROOT "nginx"
 
 if (-not (Test-Path (Join-Path $BACKEND_DIR "docker-compose.yml"))) {
-    Write-Err "Cannot find payshield-backend\docker-compose.yml"
-    Write-Err "Expected layout: <root>\payshield-backend\   and  <root>\install\"
+    Write-Err "Cannot find docker-compose.yml in payshield-backend\ or nonashield-backend\"
+    Write-Err "Expected layout: <root>\payshield-backend\ (or nonashield-backend\)   and  <root>\install\"
     exit 1
+}
+
+# docker-compose.full.windows.yml itself hardcodes ~20 relative
+# ../payshield-backend/... paths for build context and bind mounts (proven,
+# working -- deliberately not rewritten here, since editing that many mount
+# paths is a much higher-risk change than this one-time compatibility
+# junction). If the real folder is actually named nonashield-backend, make
+# those hardcoded paths keep resolving by linking the old name to it.
+if ($BACKEND_DIR -eq (Join-Path $PROJECT_ROOT "nonashield-backend")) {
+    $CompatLink = Join-Path $PROJECT_ROOT "payshield-backend"
+    if (-not (Test-Path $CompatLink)) {
+        New-Item -ItemType Junction -Path $CompatLink -Target $BACKEND_DIR | Out-Null
+    }
 }
 
 Set-Location $BACKEND_DIR

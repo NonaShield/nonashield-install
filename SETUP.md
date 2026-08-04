@@ -8,12 +8,18 @@ overview and platform matrix — this file is just the operational checklist.
 ## Why these specific steps
 
 - **Path verification (step 2)** exists because every install script
-  self-locates relative to its own file — `install\` and `payshield-backend\`
-  must be direct siblings, and the backend folder must be named exactly
-  `payshield-backend` (hardcoded, not configurable). If the project was
-  copied to a new machine with a renamed folder (e.g. `nonashield-backend`),
-  the script fails fast here with a clear error instead of a confusing
-  Docker Compose error later.
+  self-locates relative to its own file — `install\` and the backend folder
+  must be direct siblings. The backend GitHub repo is named
+  `nonashield-backend` (a plain `git clone` produces that folder name), but
+  the code inside it still says `payshield-backend` everywhere from before
+  the org's rebrand (env vars, docker service/container names,
+  `.env.example`) — a leftover from before NonaShield was the org name. All
+  four install scripts detect **either** `payshield-backend\` or
+  `nonashield-backend\` automatically, and set up a compatibility
+  junction/symlink so the ~8-20 paths hardcoded inside each
+  `docker-compose.*.yml` keep resolving either way. If neither folder is
+  found next to `install\`, the script fails fast here with a clear error
+  instead of a confusing Docker Compose one.
 - **Removing a stale `.env` (step 3)** exists because every install script
   skips secret generation entirely if `.env` already exists
   (`.env already exists — skipping generation`). A `.env` copied over from
@@ -33,17 +39,19 @@ $ProjectRoot = "D:\nonashield"
 Set-Location $ProjectRoot
 
 # 2. Verify the folder layout is intact before doing anything else --
-#    both must print True. If either is False, the code was copied with a
-#    renamed/missing folder (e.g. "nonashield-backend" instead of
-#    "payshield-backend") and the installer will fail fast with a clear
-#    error rather than a cryptic docker compose one.
+#    the first line must print True. The second checks whichever backend
+#    folder name is actually present (a fresh `git clone` of
+#    nonashield-backend produces that name; older checkouts may have it
+#    renamed to payshield-backend -- both work, see SETUP.md above).
 Test-Path "$ProjectRoot\install\install-windows-minimal.ps1"
-Test-Path "$ProjectRoot\payshield-backend\.env.example"
+Test-Path "$ProjectRoot\payshield-backend\.env.example"; Test-Path "$ProjectRoot\nonashield-backend\.env.example"
 
 # 3. Remove any stale/incompatible .env so generation actually runs
 #    (a leftover .env from a copy/previous failed attempt is skipped
-#    silently otherwise, and that's what causes the error above)
+#    silently otherwise, and that's what causes the error above).
+#    Only one of these two paths will actually exist -- that's fine.
 Remove-Item "$ProjectRoot\payshield-backend\.env" -ErrorAction SilentlyContinue
+Remove-Item "$ProjectRoot\nonashield-backend\.env" -ErrorAction SilentlyContinue
 
 # 4. Allow the script to run for this session only
 Set-ExecutionPolicy Bypass -Scope Process -Force
@@ -60,13 +68,14 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 PROJECT_ROOT=/home/user/nonashield
 cd "$PROJECT_ROOT"
 
-# 2. Verify folder layout
+# 2. Verify folder layout -- either backend folder name is accepted
 test -f "$PROJECT_ROOT/install/install-linux.sh" && echo "install script: OK"
-test -f "$PROJECT_ROOT/payshield-backend/.env.example" && echo "backend dir: OK"
+test -f "$PROJECT_ROOT/payshield-backend/.env.example" -o -f "$PROJECT_ROOT/nonashield-backend/.env.example" && echo "backend dir: OK"
 
 # 3. Remove stale .env (path depends on where the tier's deploy target is --
-#    default INSTALL_DIR is /opt/payshield unless overridden, see step 4)
-sudo rm -f /opt/payshield/payshield-backend/.env
+#    default INSTALL_DIR is /opt/payshield unless overridden, see step 4;
+#    only one of these two paths will actually exist)
+sudo rm -f /opt/payshield/payshield-backend/.env /opt/payshield/nonashield-backend/.env
 
 # 4. Run
 sudo PAYSHIELD_TIER=minimal bash install/install-linux.sh    # minimal tier

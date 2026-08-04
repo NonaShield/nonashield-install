@@ -72,11 +72,24 @@ PAYSHIELD_DOMAIN="${PAYSHIELD_DOMAIN:-localhost}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/payshield}"
 SKIP_OLLAMA="${SKIP_OLLAMA:-0}"
 PAYSHIELD_TIER="${PAYSHIELD_TIER:-full}"
-BACKEND_DIR="$INSTALL_DIR/payshield-backend"
-NGINX_DIR="$INSTALL_DIR/nginx"
-INSTALL_SCRIPTS_DIR="$INSTALL_DIR/install"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+# The GitHub repo is "nonashield-backend" (org: NonaShield) -- a plain
+# `git clone` produces a folder with that name. Everything inside the repo
+# (env vars, docker service/container names, .env.example) still says
+# "payshield" from before the rebrand, so this and every other install
+# script historically hardcoded "payshield-backend" as the sibling folder
+# name. Checking both means a fresh clone of the real repo works with zero
+# manual rename step. Detected once here since setup_install_dir() below
+# rsyncs the whole PROJECT_ROOT into INSTALL_DIR preserving this same name.
+if [[ -d "$PROJECT_ROOT/payshield-backend" ]]; then
+    BACKEND_FOLDER_NAME="payshield-backend"
+else
+    BACKEND_FOLDER_NAME="nonashield-backend"
+fi
+BACKEND_DIR="$INSTALL_DIR/$BACKEND_FOLDER_NAME"
+NGINX_DIR="$INSTALL_DIR/nginx"
+INSTALL_SCRIPTS_DIR="$INSTALL_DIR/install"
 
 if [[ "$PAYSHIELD_TIER" != "full" && "$PAYSHIELD_TIER" != "minimal" ]]; then
     echo "ERROR: PAYSHIELD_TIER must be 'full' or 'minimal', got: $PAYSHIELD_TIER" >&2
@@ -265,15 +278,26 @@ setup_install_dir() {
     mkdir -p "$INSTALL_DIR"
 
     # If running from a git checkout, copy the project files
-    if [[ -d "$PROJECT_ROOT/payshield-backend" ]]; then
+    if [[ -d "$PROJECT_ROOT/$BACKEND_FOLDER_NAME" ]]; then
         step "Copying project files from $PROJECT_ROOT..."
         rsync -a --exclude='.git' "$PROJECT_ROOT/" "$INSTALL_DIR/" 2>/dev/null || \
             cp -r "$PROJECT_ROOT/." "$INSTALL_DIR/"
         ok "Project files copied to $INSTALL_DIR"
     else
-        err "payshield-backend not found at $PROJECT_ROOT"
+        err "Neither payshield-backend nor nonashield-backend found at $PROJECT_ROOT"
         err "Please run this script from the project root directory."
         exit 1
+    fi
+
+    # docker-compose.*.{ubuntu,aws-ubuntu}.yml itself hardcodes ~8-20
+    # relative ../payshield-backend/... paths for build context and bind
+    # mounts (proven, working -- deliberately not rewritten here, since
+    # editing that many mount paths is a much higher-risk change than this
+    # one-time compatibility symlink). If the real folder is actually named
+    # nonashield-backend, make those hardcoded paths keep resolving by
+    # linking the old name to it.
+    if [[ "$BACKEND_FOLDER_NAME" == "nonashield-backend" && ! -e "$INSTALL_DIR/payshield-backend" ]]; then
+        ln -s "$INSTALL_DIR/nonashield-backend" "$INSTALL_DIR/payshield-backend"
     fi
 
     # Fix shell script line endings (in case checked out on Windows)
