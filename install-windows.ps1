@@ -200,6 +200,30 @@ function Ensure-EnvFile {
     $fernetKey  = New-FernetKey
     $airflowWS  = New-SecureHex 24
     $grafanaPass= New-SecureHex 16
+    # Both nginx and backend hard-require these (":?must be set") in every
+    # tier's compose file -- .env.example has no placeholder for
+    # EDGE_INTERNAL_SECRET at all (appended below), and an empty
+    # EDGE_CONTEXT_HMAC_KEY= placeholder (left blank for local dev, replaced
+    # in-place here).
+    $edgeInternalSecret = New-SecureHex 32
+    $edgeContextHmacKey = New-SecureHex 32
+    # DASHBOARD_SUPER_ADMIN_PASSWORD has a non-empty placeholder in
+    # .env.example ("change_me_on_first_login_min8chars"), which satisfies
+    # this compose file's ":?must be set" check without ever being replaced --
+    # every fresh install was shipping the same publicly-documented default
+    # super-admin password. Matched by literal placeholder value and replaced.
+    $dashboardAdminPass = New-SecureHex 16
+    $airflowAdminPass   = New-SecureHex 12
+    # docker-compose.full.windows.yml reads AIRFLOW_FERNET_KEY / AIRFLOW_SECRET_KEY /
+    # AIRFLOW_ADMIN_PASSWORD / VAULT_DEV_TOKEN (":?must be set") to feed the
+    # container's actual AIRFLOW__CORE__FERNET_KEY / AIRFLOW__WEBSERVER__SECRET_KEY /
+    # _AIRFLOW_WWW_USER_PASSWORD / VAULT_TOKEN env vars via interpolation. Those are
+    # DIFFERENT names than the ones .env.example defines and this function replaces
+    # in-place below (AIRFLOW__CORE__FERNET_KEY etc., which compose never reads
+    # directly) -- so without these, every fresh full-tier install fails at
+    # "AIRFLOW_FERNET_KEY must be set" / "VAULT_DEV_TOKEN must be set" even after
+    # .env is generated. Appended below under the names compose actually looks up.
+    $vaultDevToken = New-SecureHex 24
 
     $content = Get-Content ".env.example" -Raw
 
@@ -221,11 +245,30 @@ function Ensure-EnvFile {
     $content = $content -replace "change-me-fernet-key-base64-encoded=", $fernetKey
     $content = $content -replace "change-me-webserver-secret",          $airflowWS
     $content = $content -replace "payshield_grafana",                   $grafanaPass
-    $content = $content -replace "payshield_airflow_admin",             (New-SecureHex 12)
+    $content = $content -replace "payshield_airflow_admin",             $airflowAdminPass
+    $content = $content -replace "(?m)^EDGE_CONTEXT_HMAC_KEY=$", "EDGE_CONTEXT_HMAC_KEY=$edgeContextHmacKey"
+    $content = $content -replace "change_me_on_first_login_min8chars", $dashboardAdminPass
 
     # Update connection URLs that embed the password
     $content = $content -replace "payshield:payshield_secret@postgres", "payshield:${pgPass}@postgres"
     $content = $content -replace "redis://redis:6379",                  "redis://redis:6379"
+
+    # EDGE_INTERNAL_SECRET has no placeholder in .env.example at all -- appended.
+    $content += "`nEDGE_INTERNAL_SECRET=$edgeInternalSecret`n"
+    # REDIS_PASSWORD has no placeholder in .env.example either. This full-tier
+    # compose file defaults it to empty (`${REDIS_PASSWORD:-}`, unauthenticated
+    # redis) rather than requiring it, but redis is still started with
+    # `--requirepass "$REDIS_PASSWORD"` -- setting a real value here is safer
+    # than leaving redis open with no password.
+    $content += "REDIS_PASSWORD=$redisPass`n"
+    # Compose looks these four up under different names than .env.example uses
+    # -- see the comment above where $airflowAdminPass/$vaultDevToken are
+    # generated. Appended under the names docker-compose.full.windows.yml's
+    # ":?must be set" interpolations actually reference.
+    $content += "AIRFLOW_FERNET_KEY=$fernetKey`n"
+    $content += "AIRFLOW_SECRET_KEY=$airflowWS`n"
+    $content += "AIRFLOW_ADMIN_PASSWORD=$airflowAdminPass`n"
+    $content += "VAULT_DEV_TOKEN=$vaultDevToken`n"
 
     $content | Set-Content ".env" -Encoding UTF8 -NoNewline
 
@@ -236,6 +279,11 @@ function Ensure-EnvFile {
     Write-Host "    MinIO password    : $minioPass"    -ForegroundColor White
     Write-Host "    Grafana password  : $grafanaPass"  -ForegroundColor White
     Write-Host "    Admin API key     : $adminKey"     -ForegroundColor White
+    Write-Host "    Edge internal key : $edgeInternalSecret" -ForegroundColor White
+    Write-Host "    Edge HMAC key     : $edgeContextHmacKey" -ForegroundColor White
+    Write-Host "    Redis password    : $redisPass" -ForegroundColor White
+    Write-Host "    Dashboard admin   : super_admin / $dashboardAdminPass" -ForegroundColor White
+    Write-Host "    Vault dev token   : $vaultDevToken" -ForegroundColor White
     Write-Host ""
 }
 

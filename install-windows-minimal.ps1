@@ -235,6 +235,18 @@ function Ensure-EnvFile {
     # replaced in-place.
     $csrfSecret       = New-SecureHex 32
     $edgeInternalSecret = New-SecureHex 32
+    # EDGE_CONTEXT_HMAC_KEY DOES have a placeholder in .env.example (an empty
+    # `EDGE_CONTEXT_HMAC_KEY=` line, left blank for local dev) but every tier's
+    # compose file hard-requires it (":?must be set") for both nginx and
+    # backend -- generated here and replaced in-place via the anchored regex
+    # below, same as CSRF_SECRET.
+    $edgeContextHmacKey = New-SecureHex 32
+    # DASHBOARD_SUPER_ADMIN_PASSWORD has a non-empty placeholder in
+    # .env.example ("change_me_on_first_login_min8chars"), which satisfies
+    # this compose file's ":?must be set" check without ever being replaced --
+    # every fresh install was shipping the same publicly-documented default
+    # super-admin password. Matched by literal placeholder value and replaced.
+    $dashboardAdminPass = New-SecureHex 16
 
     $content = Get-Content ".env.example" -Raw
 
@@ -244,6 +256,8 @@ function Ensure-EnvFile {
     $content = $content -replace "payshield_neo4j",            $neo4jPass
     $content = $content -replace "change-me-in-production-32-chars!!", $apiKey
     $content = $content -replace "(?m)^CSRF_SECRET=$", "CSRF_SECRET=$csrfSecret"
+    $content = $content -replace "(?m)^EDGE_CONTEXT_HMAC_KEY=$", "EDGE_CONTEXT_HMAC_KEY=$edgeContextHmacKey"
+    $content = $content -replace "change_me_on_first_login_min8chars", $dashboardAdminPass
     $content = $content -replace "change-me-jwt-secret-32-chars!!!",   $jwtSecret
     # BUG FIX (2026-07): this pattern never matched anything -- .env.example's
     # actual placeholder is `BACKEND_API_KEY=ABCDEFGHI`, not the literal string
@@ -285,6 +299,12 @@ function Ensure-EnvFile {
         }
     }
     $content += "EDGE_INTERNAL_SECRET=$edgeInternalSecret`n"
+    # REDIS_PASSWORD has NO placeholder in .env.example at all (only
+    # REDIS_HOST/PORT/DB/URL are there) yet this minimal-tier compose file
+    # hard-requires it (":?must be set") for both nginx and backend, and
+    # nginx's redis container is started with `--requirepass "$REDIS_PASSWORD"`
+    # -- without this, redis itself refuses the connection. Appended here.
+    $content += "REDIS_PASSWORD=$redisPass`n"
 
     $content | Set-Content ".env" -Encoding UTF8 -NoNewline
 
@@ -294,6 +314,10 @@ function Ensure-EnvFile {
     Write-Host "    Postgres password : $pgPass"       -ForegroundColor White
     Write-Host "    MinIO password    : $minioPass"    -ForegroundColor White
     Write-Host "    Admin API key     : $adminKey"     -ForegroundColor White
+    Write-Host "    Edge internal key : $edgeInternalSecret" -ForegroundColor White
+    Write-Host "    Edge HMAC key     : $edgeContextHmacKey" -ForegroundColor White
+    Write-Host "    Redis password    : $redisPass" -ForegroundColor White
+    Write-Host "    Dashboard admin   : super_admin / $dashboardAdminPass" -ForegroundColor White
     Write-Host ""
     if (-not $jwtKeysOk) {
         Write-Warn "openssl not found (Git for Windows provides it) — JWT_PRIVATE_KEY_PEM /"

@@ -211,6 +211,33 @@ generate_env() {
     AIRFLOW_ADMIN_PASS=$(openssl rand -hex 16)
     CSRF_SECRET=$(hex32)
     EDGE_INTERNAL_SECRET=$(hex32)
+    # EDGE_CONTEXT_HMAC_KEY DOES have a placeholder in .env.example (an empty
+    # `EDGE_CONTEXT_HMAC_KEY=` line, left blank for local dev) but every tier's
+    # compose file hard-requires it (":?must be set") for both nginx and
+    # backend -- generated here and replaced in-place below, same as CSRF_SECRET.
+    EDGE_CONTEXT_HMAC_KEY=$(hex32)
+    # DASHBOARD_SUPER_ADMIN_PASSWORD has a non-empty placeholder in
+    # .env.example ("change_me_on_first_login_min8chars"), which satisfies
+    # this compose file's ":?must be set" check without ever being replaced --
+    # every fresh install was shipping the same publicly-documented default
+    # super-admin password. Matched by literal placeholder value and replaced.
+    DASHBOARD_ADMIN_PASS=$(hex20)
+    # REDIS_PASSWORD has no placeholder in .env.example at all (only
+    # REDIS_HOST/PORT/DB/URL are there). Required (":?must be set") by the
+    # minimal-tier compose file; the full-tier one defaults it to empty
+    # (unauthenticated redis) but still passes it to `--requirepass`, so a
+    # real value here is safer for both tiers. Appended below.
+    REDIS_PASSWORD=$(hex20)
+    # docker-compose.full.*.yml reads AIRFLOW_FERNET_KEY / AIRFLOW_SECRET_KEY /
+    # AIRFLOW_ADMIN_PASSWORD / VAULT_DEV_TOKEN (":?must be set") to feed the
+    # container's actual AIRFLOW__CORE__FERNET_KEY / AIRFLOW__WEBSERVER__SECRET_KEY /
+    # _AIRFLOW_WWW_USER_PASSWORD / VAULT_TOKEN env vars via interpolation --
+    # DIFFERENT names than what .env.example defines and this function
+    # sed-replaces above (which compose never reads directly for those four).
+    # Without these, PAYSHIELD_TIER=full fails at "AIRFLOW_FERNET_KEY must be
+    # set" / "VAULT_DEV_TOKEN must be set" even after .env is generated.
+    # Harmless to always generate -- unused by the minimal-tier compose file.
+    VAULT_DEV_TOKEN=$(hex32)
     JWT_PRIVATE_KEY_PEM_FILE=$(mktemp)
     JWT_PUBLIC_KEY_PEM_FILE=$(mktemp)
     openssl genrsa -out "$JWT_PRIVATE_KEY_PEM_FILE" 2048 2>/dev/null
@@ -240,8 +267,15 @@ generate_env() {
     sed -i "s/payshield_grafana/${GRAFANA_PASS}/g"                   "$env_file"
     sed -i "s/payshield_airflow_admin/${AIRFLOW_ADMIN_PASS}/g"       "$env_file"
     sed -i "s/^CSRF_SECRET=$/CSRF_SECRET=${CSRF_SECRET}/"            "$env_file"
+    sed -i "s/^EDGE_CONTEXT_HMAC_KEY=$/EDGE_CONTEXT_HMAC_KEY=${EDGE_CONTEXT_HMAC_KEY}/" "$env_file"
+    sed -i "s/change_me_on_first_login_min8chars/${DASHBOARD_ADMIN_PASS}/" "$env_file"
     {
         echo "EDGE_INTERNAL_SECRET=${EDGE_INTERNAL_SECRET}"
+        echo "REDIS_PASSWORD=${REDIS_PASSWORD}"
+        echo "AIRFLOW_FERNET_KEY=${FERNET_KEY}"
+        echo "AIRFLOW_SECRET_KEY=${AIRFLOW_WS}"
+        echo "AIRFLOW_ADMIN_PASSWORD=${AIRFLOW_ADMIN_PASS}"
+        echo "VAULT_DEV_TOKEN=${VAULT_DEV_TOKEN}"
         echo "JWT_PRIVATE_KEY_PEM=\"${JWT_PRIVATE_KEY_PEM}\""
         echo "JWT_PUBLIC_KEY_PEM=\"${JWT_PUBLIC_KEY_PEM}\""
     } >> "$env_file"
@@ -268,6 +302,10 @@ generate_env() {
     echo -e "${WHITE}    Admin API key      : $ADMIN_KEY${RESET}"
     echo -e "${WHITE}    CSRF secret        : $CSRF_SECRET${RESET}"
     echo -e "${WHITE}    Edge internal key  : $EDGE_INTERNAL_SECRET${RESET}"
+    echo -e "${WHITE}    Edge HMAC key      : $EDGE_CONTEXT_HMAC_KEY${RESET}"
+    echo -e "${WHITE}    Redis password     : $REDIS_PASSWORD${RESET}"
+    echo -e "${WHITE}    Dashboard admin    : super_admin / $DASHBOARD_ADMIN_PASS${RESET}"
+    echo -e "${WHITE}    Vault dev token    : $VAULT_DEV_TOKEN${RESET}"
     echo -e "${DIM}    JWT RSA key pair generated and written to .env directly${RESET}"
     echo ""
     warn "SSL_DIR and GEOIP_DIR are NOT auto-generated — nginx requires both in"
