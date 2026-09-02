@@ -220,6 +220,15 @@ function Ensure-EnvFile {
     $adminKey   = New-SecureHex 24
     $signingKey = New-SecureBase64 32
     $minioPass  = New-SecureHex 20
+    # MINIO_KMS_SECRET_KEY: without this, MinIO has no encryption backend at
+    # all and rejects every evidence upload with "NotImplemented ... KMS not
+    # configured" -- storage_client.py sends a mandatory ServerSideEncryption
+    # header on every PutObject regardless of tier. Confirmed live: this
+    # silently broke evidence storage AND meant Object Lock retention never
+    # got a chance to apply, since the upload itself never succeeded.
+    # .env.example's placeholder keeps the required "name:key" MinIO format
+    # intact -- only the base64 portion is replaced below.
+    $minioKmsKey = New-SecureBase64 32
     $neo4jPass  = New-SecureHex 20
     $fernetKey  = New-FernetKey
     $airflowWS  = New-SecureHex 24
@@ -254,6 +263,7 @@ function Ensure-EnvFile {
     # Replace placeholder values with generated secrets
     $content = $content -replace "payshield_secret",           $pgPass
     $content = $content -replace "payshield_minio_secret",     $minioPass
+    $content = $content -replace "REPLACE_WITH_OPENSSL_RAND_BASE64_32", $minioKmsKey
     $content = $content -replace "payshield_neo4j",            $neo4jPass
     $content = $content -replace "change-me-in-production-32-chars!!", $apiKey
     $content = $content -replace "change-me-jwt-secret-32-chars!!!",   $jwtSecret
@@ -301,6 +311,7 @@ function Ensure-EnvFile {
     Write-Host "  IMPORTANT — save these generated values somewhere safe:" -ForegroundColor Yellow
     Write-Host "    Postgres password : $pgPass"       -ForegroundColor White
     Write-Host "    MinIO password    : $minioPass"    -ForegroundColor White
+    Write-Host "    MinIO KMS key     : $minioKmsKey"  -ForegroundColor White
     Write-Host "    Grafana password  : $grafanaPass"  -ForegroundColor White
     Write-Host "    Admin API key     : $adminKey"     -ForegroundColor White
     Write-Host "    Edge internal key : $edgeInternalSecret" -ForegroundColor White

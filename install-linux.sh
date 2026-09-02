@@ -224,6 +224,15 @@ generate_env() {
 
     PG_PASS=$(hex20)
     MINIO_PASS=$(hex20)
+    # MINIO_KMS_SECRET_KEY: without this, MinIO has no encryption backend at
+    # all and rejects every evidence upload with "NotImplemented ... KMS not
+    # configured" -- storage_client.py sends a mandatory ServerSideEncryption
+    # header on every PutObject regardless of tier. Confirmed live: this
+    # silently broke evidence storage AND meant Object Lock retention never
+    # got a chance to apply, since the upload itself never succeeded.
+    # .env.example's placeholder keeps the required "name:key" MinIO format
+    # intact -- only the base64 portion is replaced below.
+    MINIO_KMS_KEY=$(b64_32)
     NEO4J_PASS=$(hex20)
     API_KEY=$(hex32)
     JWT_SECRET=$(hex32)
@@ -274,6 +283,9 @@ generate_env() {
 
     sed -i "s/payshield_secret/${PG_PASS}/g"              "$env_file"
     sed -i "s/payshield_minio_secret/${MINIO_PASS}/g"     "$env_file"
+    # base64 values can contain "/" -- "|" delimiter avoids corrupting the
+    # sed command, same reason SIGNING_KEY's substitution below uses it.
+    sed -i "s|REPLACE_WITH_OPENSSL_RAND_BASE64_32|${MINIO_KMS_KEY}|g" "$env_file"
     sed -i "s/payshield_neo4j/${NEO4J_PASS}/g"            "$env_file"
     sed -i "s/change-me-in-production-32-chars!!/${API_KEY}/g"      "$env_file"
     sed -i "s/change-me-jwt-secret-32-chars!!!/${JWT_SECRET}/g"     "$env_file"
@@ -321,6 +333,7 @@ generate_env() {
     echo -e "${YELLOW}  IMPORTANT — save these values in a secure password manager:${RESET}"
     echo -e "${WHITE}    Postgres password  : $PG_PASS${RESET}"
     echo -e "${WHITE}    MinIO password     : $MINIO_PASS${RESET}"
+    echo -e "${WHITE}    MinIO KMS key      : $MINIO_KMS_KEY${RESET}"
     echo -e "${WHITE}    Neo4j password     : $NEO4J_PASS${RESET}"
     echo -e "${WHITE}    Grafana password   : $GRAFANA_PASS${RESET}"
     echo -e "${WHITE}    Admin API key      : $ADMIN_KEY${RESET}"
