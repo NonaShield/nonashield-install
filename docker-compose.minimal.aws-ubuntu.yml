@@ -260,6 +260,9 @@ services:
       ENABLE_AUDIT_DB_PERSIST: "true"
       EVIDENCE_STORAGE_REQUIRED: "false"
       EVIDENCE_SIGNING_REQUIRED: "${EVIDENCE_SIGNING_REQUIRED:-true}"
+      # Regulator SAR export -- blank by default (see .env.example for why).
+      RBI_SAR_ENDPOINT:  "${RBI_SAR_ENDPOINT:-}"
+      NPCI_SAR_ENDPOINT: "${NPCI_SAR_ENDPOINT:-}"
       EVIDENCE_RETENTION_YEARS:  "5"
 
       # Edge token HMAC — MUST match nginx value exactly

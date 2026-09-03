@@ -725,6 +725,9 @@ services:
       S3_BUCKET_REPORTS:       payshield-reports
       EVIDENCE_SIGNING_REQUIRED: "${EVIDENCE_SIGNING_REQUIRED:-true}"
       EVIDENCE_STORAGE_REQUIRED: "${EVIDENCE_STORAGE_REQUIRED:-true}"
+      # Regulator SAR export -- blank by default (see .env.example for why).
+      RBI_SAR_ENDPOINT:  "${RBI_SAR_ENDPOINT:-}"
+      NPCI_SAR_ENDPOINT: "${NPCI_SAR_ENDPOINT:-}"
       EVIDENCE_RETENTION_YEARS:  "5"
 
       # Secrets
@@ -920,6 +923,9 @@ services:
       # Shares the persistent models volume with backend so nightly-trained
       # models land where the serving path reads them and survive recreates.
       PAYSHIELD_MODEL_DIR:        /app/models
+      # Regulator SAR export -- read by rbi_export_dag.py; blank by default.
+      RBI_SAR_ENDPOINT:           "${RBI_SAR_ENDPOINT:-}"
+      NPCI_SAR_ENDPOINT:          "${NPCI_SAR_ENDPOINT:-}"
     volumes:
       - models_data:/app/models
     networks: [payshield-net]
