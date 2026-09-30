@@ -278,6 +278,28 @@ services:
       PAYSHIELD_MODEL_DIR: /app/models
       CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-https://diimeai.com,https://api.diimeai.com}"
 
+      # CSRF — separate allow-list from CORS above (app/middleware/csrf_middleware.py),
+      # checked independently on state-changing requests to session-cookie routes
+      # (e.g. the tenant dashboard's /tenant/actions). Same values as CORS by default.
+      CSRF_ALLOWED_ORIGINS: "${CSRF_ALLOWED_ORIGINS:-https://diimeai.com,https://api.diimeai.com}"
+
+      # Same class of bug as USE_AWS_SM above: this service has no env_file:,
+      # so a var set in the host .env but not listed here never reaches the
+      # container -- matches docker-compose.yml's identical section exactly.
+      # SAAS_TRIAL_ENABLED defaults to false; on-prem/BYOC installs never set
+      # it, so the trial/tenant routers stay unmounted regardless.
+      SAAS_TRIAL_ENABLED: "${SAAS_TRIAL_ENABLED:-false}"
+      # Web fingerprint SDK routes -- off by default, same mount-or-404 gating
+      # as SAAS_TRIAL_ENABLED. This is what makes the minimal tier usable
+      # standalone as a web-fingerprint-only deployment (nginx + this backend
+      # + postgres + redis, no mobile-SDK-specific services needed): set
+      # WEB_SDK_ENABLED=true and supply WEB_SEALING_PRIVATE_KEY_PEM, nothing
+      # else in this file changes. The sealing key is a P-256 private key PEM
+      # (\n-escaped); unset means telemetry is refused (fail closed).
+      WEB_SDK_ENABLED:             "${WEB_SDK_ENABLED:-false}"
+      WEB_SEALING_PRIVATE_KEY_PEM: "${WEB_SEALING_PRIVATE_KEY_PEM:-}"
+      DEFAULT_TENANT_ID: "${DEFAULT_TENANT_ID:-default_tenant}"
+
     volumes:
       - ../payshield-backend/keys:/app/keys
       - models_data:/app/models
