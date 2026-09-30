@@ -115,16 +115,27 @@ services:
     image: nonashield/nginx-edge:latest
     container_name: payshield-nginx
     environment:
+      # APP_ENV added (2026-07): attestation_validator.lua's ATTESTATION_BYPASS_ALLOWED
+      # gate now also requires APP_ENV to be a recognised dev/demo name (nginx.conf
+      # init_by_lua_block) -- without this var reaching the nginx container, that
+      # gate always saw the "production" fallback default and would silently
+      # IGNORE ATTESTATION_BYPASS_ALLOWED=true even when legitimately needed for
+      # CI/emulator testing. Purely additive; unset/default behaviour unchanged.
+      APP_ENV:               "${APP_ENV:-production}"
       PAYSHIELD_SERVER_NAME: "${PAYSHIELD_SERVER_NAME:-api.diimeai.com}"
-      APP_ENV: "${APP_ENV:-production}"
       EDGE_CONTEXT_HMAC_KEY: "${EDGE_CONTEXT_HMAC_KEY:?EDGE_CONTEXT_HMAC_KEY must be set (openssl rand -hex 32)}"
-      EDGE_INTERNAL_SECRET: "${EDGE_INTERNAL_SECRET:?EDGE_INTERNAL_SECRET must be set (openssl rand -hex 32) -- MUST match the backend value exactly}"
+      # Stamped on X-Edge-Internal for /api/internal/* calls; the backend service
+      # below receives the same value. Optional in this file (the demo stack may not
+      # set it: both sides then fall back to the "true" literal, accepted only in
+      # dev/demo); the install/ copies make it mandatory.
+      EDGE_INTERNAL_SECRET:  "${EDGE_INTERNAL_SECRET:?EDGE_INTERNAL_SECRET must be set (openssl rand -hex 32)}"
       REDIS_HOST:            redis
       REDIS_PORT:            "6379"
       REDIS_PASSWORD:        "${REDIS_PASSWORD:-}"
       ALLOWED_ORIGINS:       "${CORS_ALLOWED_ORIGINS:-https://diimeai.com,https://api.diimeai.com}"
       POLICY_SYNC_INTERVAL:  "60"
       ATTESTATION_BYPASS_ALLOWED: "${ATTESTATION_BYPASS_ALLOWED:-false}"
+      PLAY_INTEGRITY_MODE: "${PLAY_INTEGRITY_MODE:-enforce}"
     ports:
       - "${HTTPS_PORT:-443}:8443"
       - "${HTTP_PORT:-80}:8080"
@@ -411,6 +422,19 @@ services:
     environment:
       MINIO_ROOT_USER:     "${MINIO_ROOT_USER:-payshield}"
       MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}"
+      # Gap fix (2026-08-28): with no KMS backend configured, MinIO rejects
+      # EVERY upload that carries a ServerSideEncryption header --
+      # including the AES256 (SSE-S3) fallback storage_client.py sends when
+      # EVIDENCE_KMS_KEY_ID is unset (correct for this environment; there is
+      # no real AWS KMS here) -- with "NotImplemented ... KMS not
+      # configured", confirmed live. storage_client.py's own docstring
+      # states encryption is MANDATORY, so the fix is giving MinIO a key to
+      # actually fulfill that requirement, not removing the requirement.
+      # MinIO's built-in single-key KMS (format "name:base64-32-byte-key")
+      # is the right-sized fix for a self-hosted/demo deployment; a real
+      # external KMS (Vault transit engine, AWS KMS) is the production
+      # upgrade path and only requires changing this one value.
+      MINIO_KMS_SECRET_KEY: "${MINIO_KMS_SECRET_KEY:?MINIO_KMS_SECRET_KEY must be set (openssl rand -base64 32, then prefix with 'payshield-evidence-key:')}"
     volumes:
       - minio_data:/data
     ports:
@@ -437,7 +461,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 150m
+          # 150m was too small: MinIO idles at ~133 MiB, so any burst tripped the
+          # kernel OOM killer (283 restarts in ~29h on the live demo host).
+          memory: 512m
 
   minio-init:
     image: minio/mc:RELEASE.2024-03-13T23-51-57Z
@@ -447,10 +473,21 @@ services:
       - |
         until mc alias set local http://minio:9000 \
               "${MINIO_ROOT_USER:-payshield}" "${MINIO_ROOT_PASSWORD}" 2>/dev/null; do sleep 3; done
-        mc mb --ignore-existing local/payshield-evidence
+        # Gap fix (2026-08-28): Object Lock can ONLY be enabled at bucket
+        # CREATION time -- it can never be retrofitted onto an existing
+        # bucket, even one with versioning already on. This bucket was being
+        # created WITHOUT --with-lock, so every retention-set call below was
+        # silently failing (the `|| echo WARN` swallowed it) and every real
+        # evidence write's ObjectLockManager.apply_retention() call failed
+        # too -- confirmed live: 0 of ~2,000 evidence records ever
+        # successfully reached immutable storage. --ignore-existing means
+        # this fix does NOT retroactively repair an already-existing
+        # lock-less bucket in a running environment -- that bucket must be
+        # deleted and recreated once (see ops runbook), after which this
+        # correctly creates it lock-enabled from a clean state every time.
+        mc mb --ignore-existing --with-lock local/payshield-evidence
         mc version enable local/payshield-evidence
-        mc retention set --default COMPLIANCE 5y local/payshield-evidence 2>/dev/null || \
-          echo "WARN: Object lock requires MinIO started with lock mode; skipping retention"
+        mc retention set --default COMPLIANCE 5y local/payshield-evidence
         mc mb --ignore-existing local/payshield-reports
         mc version enable local/payshield-reports
         mc mb --ignore-existing local/payshield-models
@@ -508,6 +545,9 @@ services:
     container_name: payshield-ollama
     volumes:
       - ollama_data:/root/.ollama
+    environment:
+      # Keep the model loaded between questions so Ask AI wording does not pay a ~20 s cold start.
+      OLLAMA_KEEP_ALIVE: "${OLLAMA_KEEP_ALIVE:-5m}"
     networks: [payshield-net]
     healthcheck:
       # ollama/ollama does not guarantee curl or wget in all base variants.
@@ -683,14 +723,32 @@ services:
       UVICORN_HOST:    "0.0.0.0"
       UVICORN_PORT:    "8000"
 
-      # Secret sourcing (2026-07 fix): USE_AWS_SM was never listed in
-      # this environment: block, so a customer's own .env setting was
-      # silently dropped (no env_file: on this service -- only vars
-      # explicitly listed here reach the container). Without this line,
-      # app/config/settings.py always saw its own hardcoded "true"
-      # default regardless of what a non-AWS customer set. Default kept
-      # at "true" for backward compatibility with any existing .env
-      # that predates this var; .env.example itself defaults to false.
+      # mTLS to nginx (Gap 9 completion — see nginx/conf.d/upstream.conf).
+      # Off by default: unset BACKEND_TLS_ENABLED keeps this service on plain
+      # HTTP/8000 exactly as before. To enable: run nginx/deploy.sh (now also
+      # generates backend.crt/.key off the same internal CA as nginx's own
+      # mTLS client cert), set BACKEND_TLS_ENABLED=true and SSL_DIR below,
+      # then uncomment the proxy_ssl block + switch to `server backend:8443`
+      # in nginx/conf.d/upstream.conf.
+      BACKEND_TLS_ENABLED: "${BACKEND_TLS_ENABLED:-false}"
+      UVICORN_TLS_PORT:    "${UVICORN_TLS_PORT:-8443}"
+      BACKEND_SSL_CERTFILE: "${BACKEND_TLS_ENABLED:+/app/ssl/backend.crt}"
+      BACKEND_SSL_KEYFILE:  "${BACKEND_TLS_ENABLED:+/app/ssl/backend.key}"
+      BACKEND_SSL_CA_CERTS: "${BACKEND_TLS_ENABLED:+/app/ssl/ca.crt}"
+      # Reused for this container's own healthcheck curl call, which the TLS
+      # handshake would otherwise reject once --ssl-cert-reqs 2 is active —
+      # see Dockerfile HEALTHCHECK comment.
+      HEALTHCHECK_CLIENT_CERT: "${BACKEND_TLS_ENABLED:+/app/ssl/nginx-client.crt}"
+      HEALTHCHECK_CLIENT_KEY:  "${BACKEND_TLS_ENABLED:+/app/ssl/nginx-client.key}"
+
+      # Secret sourcing (2026-07 fix): USE_AWS_SM was never listed in this
+      # environment: block, so a customer's own .env setting was silently
+      # dropped -- there is no `env_file:` directive on this service, only
+      # vars explicitly listed here reach the container. Without this line,
+      # app/config/settings.py always saw its own hardcoded "true" default
+      # regardless of what a non-AWS customer set, making USE_AWS_SM=false
+      # (see .env.example) impossible to actually configure via docker-compose.
+      # Default preserved at "true" so AWS-configured deployments are unaffected.
       USE_AWS_SM: "${USE_AWS_SM:-true}"
 
       # API security
@@ -699,6 +757,15 @@ services:
       BACKEND_API_KEY:                  "${BACKEND_API_KEY:?BACKEND_API_KEY must be set}"
       PAYSHIELD_SIGNING_SECRET_DEFAULT: "${PAYSHIELD_SIGNING_SECRET_DEFAULT:?PAYSHIELD_SIGNING_SECRET_DEFAULT must be set}"
       POLICY_SIGNING_SECRET:            "${PAYSHIELD_SIGNING_SECRET_DEFAULT:?PAYSHIELD_SIGNING_SECRET_DEFAULT must be set}"
+
+      # Same class of bug as the USE_AWS_SM fix above: this service has no
+      # env_file: directive, so a var set in the host .env but not listed
+      # here never reaches the container. TRUSTED_APK_CERT_FINGERPRINTS
+      # (attestation_validator.py's APK repackaging/cert-substitution
+      # check) was missing from this block entirely -- wiring it through
+      # now with a safe empty default, which preserves today's warn-and-skip
+      # behavior until the real release cert's SHA-256 fingerprint is set.
+      TRUSTED_APK_CERT_FINGERPRINTS: "${TRUSTED_APK_CERT_FINGERPRINTS:-}"
 
       # JWT RSA key pair — generated by deploy.sh / stored in secrets manager.
       # Both absent in local dev: key_loader generates an ephemeral pair (session-only).
@@ -750,10 +817,13 @@ services:
       S3_BUCKET_REPORTS:       payshield-reports
       EVIDENCE_SIGNING_REQUIRED: "${EVIDENCE_SIGNING_REQUIRED:-true}"
       EVIDENCE_STORAGE_REQUIRED: "${EVIDENCE_STORAGE_REQUIRED:-true}"
-      # Regulator SAR export -- blank by default (see .env.example for why).
+      EVIDENCE_RETENTION_YEARS:  "5"
+
+      # Regulator SAR export — blank by default (see .env.example for why).
+      # Read by app/services/rbi_export_service.py on every
+      # POST /api/v1/dashboard/rbi_export call.
       RBI_SAR_ENDPOINT:  "${RBI_SAR_ENDPOINT:-}"
       NPCI_SAR_ENDPOINT: "${NPCI_SAR_ENDPOINT:-}"
-      EVIDENCE_RETENTION_YEARS:  "5"
 
       # Secrets
       VAULT_ADDR:  http://vault:8200
@@ -767,9 +837,64 @@ services:
       # CORS
       CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-https://diimeai.com,https://api.diimeai.com}"
 
+      # CSRF — separate allow-list from CORS above (app/middleware/csrf_middleware.py),
+      # checked independently on state-changing requests to session-cookie routes
+      # (e.g. the tenant dashboard's /tenant/actions). Same values as CORS by default.
+      CSRF_ALLOWED_ORIGINS: "${CSRF_ALLOWED_ORIGINS:-https://diimeai.com,https://api.diimeai.com}"
+
+      # SaaS Tenancy Blueprint (2026-09-22) — same class of bug as USE_AWS_SM/
+      # TRUSTED_APK_CERT_FINGERPRINTS above: this service has no env_file:
+      # directive, so a var set in the host .env but not listed here never
+      # reaches the container. Confirmed live: EMAIL_PROVIDER stayed unset in
+      # the running container despite being set correctly in .env.demo.local,
+      # silently masked because the Python code's own default ("log_only")
+      # produced the same *behavior* either way -- so this went unnoticed
+      # until a real SES send was expected and didn't happen.
+      # SAAS_TRIAL_ENABLED defaults to false here too -- on-prem/BYOC compose
+      # files never set it, so the trial/tenant routers stay unmounted there
+      # regardless of this default.
+      SAAS_TRIAL_ENABLED: "${SAAS_TRIAL_ENABLED:-false}"
+      # Web fingerprint SDK routes -- off by default, same mount-or-404 gating as
+      # SAAS_TRIAL_ENABLED. The sealing key is a P-256 private key PEM (\n-escaped);
+      # unset means telemetry is refused (fail closed).
+      WEB_SDK_ENABLED:             "${WEB_SDK_ENABLED:-false}"
+      WEB_SEALING_PRIVATE_KEY_PEM: "${WEB_SEALING_PRIVATE_KEY_PEM:-}"
+      DEFAULT_TENANT_ID:  "${DEFAULT_TENANT_ID:-default_tenant}"
+      EMAIL_PROVIDER:     "${EMAIL_PROVIDER:-log_only}"
+      AWS_SES_REGION:     "${AWS_SES_REGION:-ap-south-1}"
+      # Dedicated SES-sending credentials, deliberately separate from
+      # AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY below (those belong to
+      # MinIO, the S3-compatible evidence store -- reusing boto3's default
+      # credential chain for SES would authenticate to real AWS with a
+      # MinIO credential AWS has never heard of). Empty defaults preserve
+      # today's log_only-safe behavior on any deployment that hasn't set
+      # these; app/services/email_service.py falls back to boto3's default
+      # chain if a deployment has a real IAM instance profile instead.
+      AWS_SES_ACCESS_KEY_ID:     "${AWS_SES_ACCESS_KEY_ID:-}"
+      AWS_SES_SECRET_ACCESS_KEY: "${AWS_SES_SECRET_ACCESS_KEY:-}"
+      EMAIL_FROM_ADDRESS: "${EMAIL_FROM_ADDRESS:-contactus@diimeai.com}"
+      PUBLIC_BASE_URL:    "${PUBLIC_BASE_URL:-https://api.diimeai.com}"
+      # Cloudflare Turnstile secret for the trial signup captcha. Empty =
+      # captcha not enforced (POST /api/v1/trial/signup skips the check), so
+      # this is safe to ship before the key exists. Must be listed here --
+      # this service has no env_file:, only what's named in this block reaches
+      # the container.
+      TURNSTILE_SECRET_KEY: "${TURNSTILE_SECRET_KEY:-}"
+      AI_PROJECTOR_ENABLED: "${AI_PROJECTOR_ENABLED:-true}"
+      ASK_LLM_MODEL: "${ASK_LLM_MODEL:-}"
+      ASK_LLM_PLANNER: "${ASK_LLM_PLANNER:-false}"
+      ASK_LLM_URL: "${ASK_LLM_URL:-http://ollama:11434}"
+
       # Edge token HMAC — MUST match nginx value exactly
       EDGE_CONTEXT_HMAC_KEY: "${EDGE_CONTEXT_HMAC_KEY:?EDGE_CONTEXT_HMAC_KEY must be set}"
-      EDGE_INTERNAL_SECRET: "${EDGE_INTERNAL_SECRET:?EDGE_INTERNAL_SECRET must be set (openssl rand -hex 32) -- MUST match the nginx value exactly}"
+
+      # Required by main.py's production startup gate (APP_ENV=production refuses
+      # to start without them). Optional in this file so the demo stack starts
+      # without them (an empty CSRF_SECRET falls back to a per-process random
+      # secret); the install/ copies make EDGE_INTERNAL_SECRET mandatory, since
+      # every installer generates it.
+      CSRF_SECRET:          "${CSRF_SECRET:-}"
+      EDGE_INTERNAL_SECRET: "${EDGE_INTERNAL_SECRET:?EDGE_INTERNAL_SECRET must be set (openssl rand -hex 32)}"
 
       # Dashboard admin — used by the 20260602_add_dashboard_admins Alembic migration
       # to seed the first super_admin on first deployment (idempotent on re-runs).
@@ -791,10 +916,26 @@ services:
       CDT_STEP_UP_THRESHOLD: "${CDT_STEP_UP_THRESHOLD:-50}"
       CDT_REVIEW_THRESHOLD:  "${CDT_REVIEW_THRESHOLD:-30}"
 
+      # Android Play Integrity — CRITICAL gap fix: neither of these two vars
+      # was ever listed in this environment: block. deploy.sh DOES write
+      # PLAY_INTEGRITY_PACKAGE_NAME into the generated host .env, but
+      # (same class of bug as USE_AWS_SM / TRUSTED_APK_CERT_FINGERPRINTS
+      # above) a var missing from this block never reaches the container --
+      # so enrollment.py's _verify_play_integrity() has been receiving an
+      # empty PLAY_INTEGRITY_PACKAGE_NAME regardless of what deploy.sh
+      # wrote, hard-failing every enrollment with HTTP 503 "Play Integrity
+      # verification not configured on this server" in any non-demo
+      # deployment. GOOGLE_APPLICATION_CREDENTIALS was missing from BOTH
+      # this file and deploy.sh's generated .env -- never wired at all.
+      PLAY_INTEGRITY_PACKAGE_NAME:  "${PLAY_INTEGRITY_PACKAGE_NAME:-}"
+      GOOGLE_APPLICATION_CREDENTIALS: "${GOOGLE_APPLICATION_CREDENTIALS:-}"
+
       # Apple iOS attestation
       APPLE_APP_ID:         "${APPLE_APP_ID:-}"
       APPLE_APP_ATTEST_ENV: "${APPLE_APP_ATTEST_ENV:-production}"
       ATTESTATION_BYPASS_ALLOWED: "${ATTESTATION_BYPASS_ALLOWED:-false}"
+      PLAY_INTEGRITY_MODE: "${PLAY_INTEGRITY_MODE:-enforce}"
+      ATTEST_SESSION_TTL_S: "${ATTEST_SESSION_TTL_S:-900}"
 
       # Demo login credentials (non-prod only — /auth/login validates against these)
       DEMO_LOGIN_USERNAME: "${DEMO_LOGIN_USERNAME:-demo_investor}"
@@ -814,6 +955,31 @@ services:
     volumes:
       - ../payshield-backend/keys:/app/keys
       - models_data:/app/models
+      # mTLS certs — only read when BACKEND_TLS_ENABLED=true (unused
+      # otherwise). SSL_DIR defaults to nginx/deploy.sh's own output dir so
+      # both services read from the one place certs get generated; override
+      # if yours differs. create_host_path lets compose create an empty dir
+      # here when SSL_DIR doesn't exist yet, so a plain-HTTP deployment
+      # (BACKEND_TLS_ENABLED unset) that never ran deploy.sh still starts —
+      # this mount must never be a hard prerequisite for the non-TLS default.
+      - type: bind
+        source: "${SSL_DIR:-../nginx/ssl}"
+        target: /app/ssl
+        read_only: true
+        bind:
+          create_host_path: true
+      # Google service-account credentials for Play Integrity's
+      # decodeIntegrityToken API call. Directory mount (not a single-file
+      # mount) so create_host_path never fails when Play Integrity isn't
+      # configured for this deployment yet -- an empty dir is harmless,
+      # GOOGLE_APPLICATION_CREDENTIALS above just won't resolve to a real
+      # file and _verify_play_integrity() reports 503 same as today.
+      - type: bind
+        source: "${GOOGLE_CREDENTIALS_DIR:-../payshield-backend/secrets/google}"
+        target: /app/secrets/google
+        read_only: true
+        bind:
+          create_host_path: true
     networks: [payshield-net]
     depends_on:
       # Hard blockers: DB and cache must be accepting connections.
@@ -839,7 +1005,11 @@ services:
       models-init:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      # Mirrors the Dockerfile HEALTHCHECK's TLS-aware logic (see its comment
+      # for why HEALTHCHECK_CLIENT_CERT/_KEY are needed once --ssl-cert-reqs
+      # 2 is active) — kept in sync rather than relying on the image default
+      # so compose-level overrides (e.g. UVICORN_TLS_PORT) are honored.
+      test: ["CMD-SHELL", "if [ \"$BACKEND_TLS_ENABLED\" = \"true\" ]; then curl -sf -k ${HEALTHCHECK_CLIENT_CERT:+--cert \"$HEALTHCHECK_CLIENT_CERT\"} ${HEALTHCHECK_CLIENT_KEY:+--key \"$HEALTHCHECK_CLIENT_KEY\"} \"https://localhost:${UVICORN_TLS_PORT:-8443}/health\"; else curl -sf http://localhost:8000/health; fi"]
       interval: 15s
       timeout: 10s
       retries: 8
@@ -920,7 +1090,7 @@ services:
 
   airflow:
     build:
-      context: ../payshield-backend  # backend root — Dockerfile COPYs app/ core/ config/ alembic/ from here
+      context: ../payshield-backend                          # backend root — Dockerfile COPYs app/ core/ config/ alembic/ from here
       dockerfile: ai_orchestrator/Dockerfile
     image: nonashield/airflow:latest
     container_name: payshield-airflow
@@ -948,7 +1118,8 @@ services:
       # Shares the persistent models volume with backend so nightly-trained
       # models land where the serving path reads them and survive recreates.
       PAYSHIELD_MODEL_DIR:        /app/models
-      # Regulator SAR export -- read by rbi_export_dag.py; blank by default.
+      # Regulator SAR export — read by rbi_export_dag.py's scheduled batch
+      # path; blank by default, same as the backend service (see .env.example).
       RBI_SAR_ENDPOINT:           "${RBI_SAR_ENDPOINT:-}"
       NPCI_SAR_ENDPOINT:          "${NPCI_SAR_ENDPOINT:-}"
     volumes:
@@ -961,12 +1132,20 @@ services:
         condition: service_healthy
       models-init:
         condition: service_completed_successfully
+    # The `airflow users create ...` step that used to live here is redundant
+    # with (and was broken by) this base image's own admin-user bootstrap:
+    # apache/airflow's webserver entrypoint already auto-creates the admin
+    # user from _AIRFLOW_WWW_USER_USERNAME / _AIRFLOW_WWW_USER_PASSWORD (both
+    # set above), independent of how `airflow webserver` gets invoked. The
+    # manual version here also had a YAML folded-scalar bug: the --role/
+    # --email/--password continuation lines were indented deeper than the
+    # rest of the block, so YAML preserved them as literal newlines instead
+    # of folding them into the command -- bash then ran `--role ...` and
+    # `--password ...` as their own (nonexistent) commands. Silently swallowed
+    # by the lack of `set -e`, so it never surfaced as a startup failure.
     command: >
       bash -c "
         airflow db migrate &&
-        airflow users create --username admin --firstname Admin --lastname User
-          --role Admin --email admin@nonashield.local
-          --password $${AIRFLOW_ADMIN_PASSWORD} 2>/dev/null || true &&
         airflow scheduler &
         airflow webserver
       "
@@ -975,7 +1154,17 @@ services:
     deploy:
       resources:
         limits:
-          memory: 300m
+          # Was 300m -- far too small for scheduler + gunicorn webserver
+          # together (each individual airflow process runs 140-170MB RSS
+          # per `dmesg` at OOM time). Confirmed via `docker inspect
+          # OOMKilled=true`: this was killing and restarting the container
+          # every 9-15s, 2512+ times. Host is t2.large (7.8GB), 5.2GB
+          # available at time of fix. First tried 1536m -- stabilized
+          # (RestartCount=0) but sat at ~81% (1.2GiB) right after startup
+          # during DAG-file parsing, too close to the ceiling for comfort.
+          # 2048m leaves real headroom instead of trading one crash-loop
+          # risk for a slower one.
+          memory: 2048m
 
   # One-shot: prepare the shared models volume so backend (uid 1001),
   # processor, and airflow (all different non-root UIDs) can read/write model

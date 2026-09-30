@@ -39,6 +39,10 @@ for full, `docker-compose.minimal.yml` for minimal) with only platform-specific
 notes added — the actual service definitions are never hand-edited to differ
 between platforms.
 
+After changing either original, regenerate all eight copies (each keeps its
+own header) with `python tools/sync_compose.py`; `python tools/sync_compose.py
+--check` exits non-zero when any copy is out of date.
+
 ## Two different AWS paths — read this first
 
 There are **two, deliberately separate** ways this stack ends up running on AWS:
