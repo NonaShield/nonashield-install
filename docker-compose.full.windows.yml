@@ -35,8 +35,8 @@
 # Optional (have sensible defaults):
 #   PAYSHIELD_SERVER_NAME  default: api.diimeai.com
 #   OLLAMA_MODEL           default: llama3
-#   HTTPS_PORT             default: 443
-#   HTTP_PORT              default: 80
+#   HTTPS_PORT             default: 443 (port 80 is not published by default -- see the
+#                          service's own ports: comment)
 #   See individual services for full list.
 #
 # Quick start (run from install/, .env lives in payshield-backend/):
@@ -113,7 +113,12 @@ services:
       PLAY_INTEGRITY_MODE: "${PLAY_INTEGRITY_MODE:-enforce}"
     ports:
       - "${HTTPS_PORT:-443}:8443"
-      - "${HTTP_PORT:-80}:8080"
+      # Port 80 is deliberately NOT published here. nginx's only port-8080 listener
+      # (conf.d/grafana_proxy.conf) is a bare HTTP->HTTPS redirect -- not part of the
+      # documented architecture (TLS 1.3 only on 8443) -- and an open, unencrypted
+      # port is exactly the kind of unexpected attack surface a customer's own
+      # security audit flags (RFP Sr 47). If you specifically want the convenience
+      # redirect, add back `- "${HTTP_PORT:-80}:8080"` yourself.
     volumes:
       # TLS certificates — Let's Encrypt or your CA.
       # Directory must contain: fullchain.pem  privkey.pem
