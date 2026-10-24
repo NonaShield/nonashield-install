@@ -1,0 +1,9 @@
+
+# Secrets: never commit (S-10)
+*.pem
+*.key
+*.p12
+*.pfx
+.env
+*credentials*.txt
+*accessKeys*.csv

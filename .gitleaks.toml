@@ -1,0 +1,10 @@
+# gitleaks config (S-10): default rules plus the documented test fixtures and AWS example keys.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures and AWS documentation example keys"
+regexes = [
+  '''AKIATEST[0-9A-Z]{12}''',
+  '''AKIA[0-9A-Z]{0,12}EXAMPLE''',
+]
