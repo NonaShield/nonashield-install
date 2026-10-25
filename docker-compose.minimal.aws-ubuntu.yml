@@ -96,6 +96,9 @@ services:
       # Must equal the backend's EDGE_INTERNAL_SECRET (required below), or every
       # /api/internal/* call is rejected -- nginx would otherwise send the "true" literal.
       EDGE_INTERNAL_SECRET:  "${EDGE_INTERNAL_SECRET:?EDGE_INTERNAL_SECRET must be set (openssl rand -hex 32)}"
+      # C-3 rotation: the id stamped in the signed token. Rotate by giving the backend the new key as
+      # EDGE_CONTEXT_HMAC_KEY and the old one as EDGE_CONTEXT_HMAC_KEY_PREVIOUS first, then switch nginx.
+      EDGE_CONTEXT_HMAC_KEY_ID: "${EDGE_CONTEXT_HMAC_KEY_ID:-}"
       REDIS_HOST:            redis
       REDIS_PORT:            "6379"
       REDIS_PASSWORD:        "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
@@ -252,6 +255,11 @@ services:
       # Required by main.py's production security gate.
       CSRF_SECRET:         "${CSRF_SECRET:?CSRF_SECRET must be set (openssl rand -hex 32)}"
       EDGE_INTERNAL_SECRET: "${EDGE_INTERNAL_SECRET:?EDGE_INTERNAL_SECRET must be set (openssl rand -hex 32)}"
+      # C-3 rotation: the previous key/secret are accepted alongside the current one until nginx has switched.
+      EDGE_CONTEXT_HMAC_KEY_ID:          "${EDGE_CONTEXT_HMAC_KEY_ID:-}"
+      EDGE_CONTEXT_HMAC_KEY_PREVIOUS:    "${EDGE_CONTEXT_HMAC_KEY_PREVIOUS:-}"
+      EDGE_CONTEXT_HMAC_KEY_PREVIOUS_ID: "${EDGE_CONTEXT_HMAC_KEY_PREVIOUS_ID:-}"
+      EDGE_INTERNAL_SECRET_PREVIOUS:     "${EDGE_INTERNAL_SECRET_PREVIOUS:-}"
 
       # Database
       DATABASE_URL:      "postgresql://payshield:${POSTGRES_PASSWORD}@postgres:5432/payshield"

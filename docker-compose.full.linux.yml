@@ -108,6 +108,9 @@ services:
       # set it: both sides then fall back to the "true" literal, accepted only in
       # dev/demo); the install/ copies make it mandatory.
       EDGE_INTERNAL_SECRET:  "${EDGE_INTERNAL_SECRET:?EDGE_INTERNAL_SECRET must be set (openssl rand -hex 32)}"
+      # C-3 rotation: the id stamped in the signed token. Rotate by giving the backend the new key as
+      # EDGE_CONTEXT_HMAC_KEY and the old one as EDGE_CONTEXT_HMAC_KEY_PREVIOUS first, then switch nginx.
+      EDGE_CONTEXT_HMAC_KEY_ID: "${EDGE_CONTEXT_HMAC_KEY_ID:-}"
       REDIS_HOST:            redis
       REDIS_PORT:            "6379"
       REDIS_PASSWORD:        "${REDIS_PASSWORD:-}"
@@ -887,6 +890,11 @@ services:
       # every installer generates it.
       CSRF_SECRET:          "${CSRF_SECRET:-}"
       EDGE_INTERNAL_SECRET: "${EDGE_INTERNAL_SECRET:?EDGE_INTERNAL_SECRET must be set (openssl rand -hex 32)}"
+      # C-3 rotation: the previous key/secret are accepted alongside the current one until nginx has switched.
+      EDGE_CONTEXT_HMAC_KEY_ID:          "${EDGE_CONTEXT_HMAC_KEY_ID:-}"
+      EDGE_CONTEXT_HMAC_KEY_PREVIOUS:    "${EDGE_CONTEXT_HMAC_KEY_PREVIOUS:-}"
+      EDGE_CONTEXT_HMAC_KEY_PREVIOUS_ID: "${EDGE_CONTEXT_HMAC_KEY_PREVIOUS_ID:-}"
+      EDGE_INTERNAL_SECRET_PREVIOUS:     "${EDGE_INTERNAL_SECRET_PREVIOUS:-}"
 
       # Dashboard admin — used by the 20260602_add_dashboard_admins Alembic migration
       # to seed the first super_admin on first deployment (idempotent on re-runs).
