@@ -98,6 +98,9 @@ services:
       # CI/emulator testing. Purely additive; unset/default behaviour unchanged.
       APP_ENV:               "${APP_ENV:-production}"
       PAYSHIELD_SERVER_NAME: "${PAYSHIELD_SERVER_NAME:-api.diimeai.com}"
+      PAYSHIELD_IPV6: "${PAYSHIELD_IPV6:-false}"
+      # The tenant the edge stamps and keys device commands under: this deployment's own tenant.
+      PAYSHIELD_TENANT_ID:   "${DEFAULT_TENANT_ID:-default_tenant}"
       EDGE_CONTEXT_HMAC_KEY: "${EDGE_CONTEXT_HMAC_KEY:?EDGE_CONTEXT_HMAC_KEY must be set (openssl rand -hex 32)}"
       # Stamped on X-Edge-Internal for /api/internal/* calls; the backend service
       # below receives the same value. Optional in this file (the demo stack may not
@@ -650,6 +653,11 @@ services:
       - --web.enable-admin-api
     volumes:
       - ../payshield-backend/infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # A-6: client certificate for scraping the backend's /metrics over mTLS.
+      - type: bind
+        source: "${SSL_DIR:?SSL_DIR must be set (dir containing fullchain.pem + privkey.pem)}"
+        target: /etc/prometheus/mtls
+        read_only: true
       - prometheus_data:/prometheus
     networks: [payshield-net]
     restart: unless-stopped
@@ -703,14 +711,10 @@ services:
       UVICORN_HOST:    "0.0.0.0"
       UVICORN_PORT:    "8000"
 
-      # mTLS to nginx (Gap 9 completion — see nginx/conf.d/upstream.conf).
-      # Off by default: unset BACKEND_TLS_ENABLED keeps this service on plain
-      # HTTP/8000 exactly as before. To enable: run nginx/deploy.sh (now also
-      # generates backend.crt/.key off the same internal CA as nginx's own
-      # mTLS client cert), set BACKEND_TLS_ENABLED=true and SSL_DIR below,
-      # then uncomment the proxy_ssl block + switch to `server backend:8443`
-      # in nginx/conf.d/upstream.conf.
-      BACKEND_TLS_ENABLED: "${BACKEND_TLS_ENABLED:-false}"
+      # NGINX→backend mTLS (A-6), on by default: mtls-init writes the certificates and the
+      # nginx include into SSL_DIR; this service serves TLS on 8443 and requires nginx's
+      # client certificate. BACKEND_TLS_ENABLED=false keeps plain HTTP/8000 on both sides.
+      BACKEND_TLS_ENABLED: "${BACKEND_TLS_ENABLED:-true}"
       UVICORN_TLS_PORT:    "${UVICORN_TLS_PORT:-8443}"
       BACKEND_SSL_CERTFILE: "${BACKEND_TLS_ENABLED:+/app/ssl/backend.crt}"
       BACKEND_SSL_KEYFILE:  "${BACKEND_TLS_ENABLED:+/app/ssl/backend.key}"
@@ -853,6 +857,13 @@ services:
       AWS_SES_ACCESS_KEY_ID:     "${AWS_SES_ACCESS_KEY_ID:-}"
       AWS_SES_SECRET_ACCESS_KEY: "${AWS_SES_SECRET_ACCESS_KEY:-}"
       EMAIL_FROM_ADDRESS: "${EMAIL_FROM_ADDRESS:-contactus@diimeai.com}"
+      # Trial SDK download links (app/services/trial_sdk_download.py): a private S3 bucket and a read-only key
+      # for it. Empty bucket = no links, the team email says to send the signed AAR by hand.
+      TRIAL_SDK_BUCKET:            "${TRIAL_SDK_BUCKET:-}"
+      TRIAL_SDK_PREFIX:            "${TRIAL_SDK_PREFIX:-trial/latest/}"
+      TRIAL_SDK_REGION:            "${TRIAL_SDK_REGION:-ap-south-1}"
+      TRIAL_SDK_ACCESS_KEY_ID:     "${TRIAL_SDK_ACCESS_KEY_ID:-}"
+      TRIAL_SDK_SECRET_ACCESS_KEY: "${TRIAL_SDK_SECRET_ACCESS_KEY:-}"
       PUBLIC_BASE_URL:    "${PUBLIC_BASE_URL:-https://api.diimeai.com}"
       # Cloudflare Turnstile secret for the trial signup captcha. Empty =
       # captcha not enforced (POST /api/v1/trial/signup skips the check), so
@@ -917,6 +928,38 @@ services:
       PLAY_INTEGRITY_MODE: "${PLAY_INTEGRITY_MODE:-enforce}"
       ATTEST_SESSION_TTL_S: "${ATTEST_SESSION_TTL_S:-900}"
 
+      # Policy signing: the device-commands response is signed with a per-tenant key. Without
+      # POLICY_KEY_WRAP_SECRET the response goes out unsigned (SDKs without a root key are unaffected).
+      POLICY_KEY_WRAP_SECRET:   "${POLICY_KEY_WRAP_SECRET:-}"
+      POLICY_KEY_ROTATION_DAYS: "${POLICY_KEY_ROTATION_DAYS:-90}"
+      POLICY_KEY_OVERLAP_DAYS:  "${POLICY_KEY_OVERLAP_DAYS:-14}"
+
+      # SOC portal security (WS6). PORTAL_MFA_WRAP_SECRET encrypts users' TOTP secrets and is required before any
+      # role can be made MFA-mandatory. The CAPTCHA and SSO state secrets fall back to a hash of the JWT signing key.
+      # OIDC single sign-on is off until the issuer, client id and redirect URI are all set.
+      PORTAL_MFA_WRAP_SECRET:   "${PORTAL_MFA_WRAP_SECRET:-}"
+      PORTAL_CAPTCHA_SECRET:    "${PORTAL_CAPTCHA_SECRET:-}"
+      PORTAL_SSO_SECRET:        "${PORTAL_SSO_SECRET:-}"
+      PORTAL_OIDC_ISSUER:       "${PORTAL_OIDC_ISSUER:-}"
+      PORTAL_OIDC_CLIENT_ID:    "${PORTAL_OIDC_CLIENT_ID:-}"
+      PORTAL_OIDC_CLIENT_SECRET: "${PORTAL_OIDC_CLIENT_SECRET:-}"
+      PORTAL_OIDC_REDIRECT_URI: "${PORTAL_OIDC_REDIRECT_URI:-}"
+      PORTAL_OIDC_GROUPS_CLAIM: "${PORTAL_OIDC_GROUPS_CLAIM:-groups}"
+      PORTAL_OIDC_SCOPES:       "${PORTAL_OIDC_SCOPES:-openid profile email groups}"
+      PORTAL_OIDC_POST_LOGIN_URL: "${PORTAL_OIDC_POST_LOGIN_URL:-/admin/soc-dashboard}"
+
+      # Portal analytics, SIEM and binding monitor (WS7). SIEM push is off until a wrap secret and an allow-list of
+      # destination hosts are set; the client IP is left out of SIEM events unless switched on.
+      SIEM_WEBHOOK_WRAP_SECRET:    "${SIEM_WEBHOOK_WRAP_SECRET:-}"
+      SIEM_WEBHOOK_ALLOWED_HOSTS:  "${SIEM_WEBHOOK_ALLOWED_HOSTS:-}"
+      SIEM_WEBHOOK_ALLOW_HTTP:     "${SIEM_WEBHOOK_ALLOW_HTTP:-false}"
+      SIEM_INCLUDE_CLIENT_IP:      "${SIEM_INCLUDE_CLIENT_IP:-false}"
+      BINDING_CHANGES_PER_USER_24H:   "${BINDING_CHANGES_PER_USER_24H:-5}"
+      BINDING_CHANGES_PER_DEVICE_24H: "${BINDING_CHANGES_PER_DEVICE_24H:-3}"
+      BINDING_REQUIRES_LOCATION:   "${BINDING_REQUIRES_LOCATION:-false}"
+      DEVICE_ACTIVITY_ROLLUP_ENABLED: "${DEVICE_ACTIVITY_ROLLUP_ENABLED:-true}"
+      DEVICE_ACTIVITY_INTERVAL_S:  "${DEVICE_ACTIVITY_INTERVAL_S:-1800}"
+
       # Demo login credentials (non-prod only — /auth/login validates against these)
       DEMO_LOGIN_USERNAME: "${DEMO_LOGIN_USERNAME:-demo_investor}"
       DEMO_LOGIN_PASSWORD: "${DEMO_LOGIN_PASSWORD:-Demo@123}"
@@ -935,19 +978,11 @@ services:
     volumes:
       - ../payshield-backend/keys:/app/keys
       - models_data:/app/models
-      # mTLS certs — only read when BACKEND_TLS_ENABLED=true (unused
-      # otherwise). SSL_DIR defaults to nginx/deploy.sh's own output dir so
-      # both services read from the one place certs get generated; override
-      # if yours differs. create_host_path lets compose create an empty dir
-      # here when SSL_DIR doesn't exist yet, so a plain-HTTP deployment
-      # (BACKEND_TLS_ENABLED unset) that never ran deploy.sh still starts —
-      # this mount must never be a hard prerequisite for the non-TLS default.
+      # mTLS certs, written by mtls-init into the same SSL_DIR nginx mounts.
       - type: bind
-        source: "${SSL_DIR:-../nginx/ssl}"
+        source: "${SSL_DIR:?SSL_DIR must be set (dir containing fullchain.pem + privkey.pem)}"
         target: /app/ssl
         read_only: true
-        bind:
-          create_host_path: true
       # Google service-account credentials for Play Integrity's
       # decodeIntegrityToken API call. Directory mount (not a single-file
       # mount) so create_host_path never fails when Play Integrity isn't
@@ -983,6 +1018,8 @@ services:
       vault:
         condition: service_started
       models-init:
+        condition: service_completed_successfully
+      mtls-init:
         condition: service_completed_successfully
     healthcheck:
       # Mirrors the Dockerfile HEALTHCHECK's TLS-aware logic (see its comment
@@ -1098,6 +1135,8 @@ services:
       # Shares the persistent models volume with backend so nightly-trained
       # models land where the serving path reads them and survive recreates.
       PAYSHIELD_MODEL_DIR:        /app/models
+      # The hourly compliance snapshot is saved under this tenant; the dashboard reads it under the same one.
+      DEFAULT_TENANT_ID:          "${DEFAULT_TENANT_ID:-default_tenant}"
       # Regulator SAR export — read by rbi_export_dag.py's scheduled batch
       # path; blank by default, same as the backend service (see .env.example).
       RBI_SAR_ENDPOINT:           "${RBI_SAR_ENDPOINT:-}"
@@ -1156,6 +1195,29 @@ services:
     command: sh -c "mkdir -p /models && chmod 0777 /models && echo 'models volume ready'"
     volumes:
       - models_data:/models
+    networks: [payshield-net]
+    restart: "no"
+    logging: *default-logging
+
+  # A-6: NGINX→backend mTLS material, generated in place in SSL_DIR (scripts/gen_internal_mtls.py):
+  # internal CA, backend server cert, nginx and Prometheus client certs, and the nginx include
+  # backend-mtls.conf. Runs once before the backend starts; idempotent, renews leaves with < 30 days.
+  # BACKEND_TLS_ENABLED=false removes the include, so nginx and the backend both stay on plain HTTP.
+  mtls-init:
+    build:
+      context: ../payshield-backend
+      dockerfile: Dockerfile
+      target: production
+    image: nonashield/backend:latest
+    container_name: payshield-mtls-init
+    user: "0:0"
+    entrypoint: ["python", "scripts/gen_internal_mtls.py", "/app/ssl"]
+    environment:
+      BACKEND_TLS_ENABLED: "${BACKEND_TLS_ENABLED:-true}"
+    volumes:
+      - type: bind
+        source: "${SSL_DIR:?SSL_DIR must be set (dir containing fullchain.pem + privkey.pem)}"
+        target: /app/ssl
     networks: [payshield-net]
     restart: "no"
     logging: *default-logging

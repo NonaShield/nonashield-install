@@ -67,6 +67,9 @@ services:
       # silently ignore ATTESTATION_BYPASS_ALLOWED=true.
       APP_ENV:               "${APP_ENV:-production}"
       PAYSHIELD_SERVER_NAME: "${PAYSHIELD_SERVER_NAME:-api.diimeai.com}"
+      PAYSHIELD_IPV6: "${PAYSHIELD_IPV6:-false}"
+      # The tenant the edge stamps and keys device commands under: this deployment's own tenant.
+      PAYSHIELD_TENANT_ID:   "${DEFAULT_TENANT_ID:-default_tenant}"
       EDGE_CONTEXT_HMAC_KEY: "${EDGE_CONTEXT_HMAC_KEY:?EDGE_CONTEXT_HMAC_KEY must be set (openssl rand -hex 32)}"
       # Must equal the backend's EDGE_INTERNAL_SECRET (required below), or every
       # /api/internal/* call is rejected -- nginx would otherwise send the "true" literal.
@@ -198,6 +201,15 @@ services:
       UVICORN_HOST:    "0.0.0.0"
       UVICORN_PORT:    "8000"
 
+      # NGINX→backend mTLS (A-6), on by default — see docker-compose.yml's identical section.
+      BACKEND_TLS_ENABLED: "${BACKEND_TLS_ENABLED:-true}"
+      UVICORN_TLS_PORT:    "${UVICORN_TLS_PORT:-8443}"
+      BACKEND_SSL_CERTFILE: "${BACKEND_TLS_ENABLED:+/app/ssl/backend.crt}"
+      BACKEND_SSL_KEYFILE:  "${BACKEND_TLS_ENABLED:+/app/ssl/backend.key}"
+      BACKEND_SSL_CA_CERTS: "${BACKEND_TLS_ENABLED:+/app/ssl/ca.crt}"
+      HEALTHCHECK_CLIENT_CERT: "${BACKEND_TLS_ENABLED:+/app/ssl/nginx-client.crt}"
+      HEALTHCHECK_CLIENT_KEY:  "${BACKEND_TLS_ENABLED:+/app/ssl/nginx-client.key}"
+
       # Secret sourcing (2026-07 fix): see docker-compose.yml's identical
       # comment -- USE_AWS_SM was never listed here, so a non-AWS customer's
       # own .env setting was silently dropped (no env_file: on this service).
@@ -309,14 +321,21 @@ services:
     volumes:
       - ../payshield-backend/keys:/app/keys
       - models_data:/app/models
+      # mTLS certs, written by mtls-init into the same SSL_DIR nginx mounts.
+      - type: bind
+        source: "${SSL_DIR:?SSL_DIR must be set (dir containing fullchain.pem + privkey.pem)}"
+        target: /app/ssl
+        read_only: true
     networks: [payshield-net]
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mtls-init:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      test: ["CMD-SHELL", "if [ \"$BACKEND_TLS_ENABLED\" = \"true\" ]; then curl -sf -k ${HEALTHCHECK_CLIENT_CERT:+--cert \"$HEALTHCHECK_CLIENT_CERT\"} ${HEALTHCHECK_CLIENT_KEY:+--key \"$HEALTHCHECK_CLIENT_KEY\"} \"https://localhost:${UVICORN_TLS_PORT:-8443}/health\"; else curl -sf http://localhost:8000/health; fi"]
       interval: 15s
       timeout: 10s
       retries: 8
@@ -327,3 +346,26 @@ services:
       resources:
         limits:
           memory: "${BACKEND_MEMORY_LIMIT:-512m}"
+
+  # A-6: NGINX→backend mTLS material, generated in place in SSL_DIR (scripts/gen_internal_mtls.py):
+  # internal CA, backend server cert, nginx and Prometheus client certs, and the nginx include
+  # backend-mtls.conf. Runs once before the backend starts; idempotent, renews leaves with < 30 days.
+  # BACKEND_TLS_ENABLED=false removes the include, so nginx and the backend both stay on plain HTTP.
+  mtls-init:
+    build:
+      context: ../payshield-backend
+      dockerfile: Dockerfile
+      target: production
+    image: nonashield/backend:latest
+    container_name: payshield-mtls-init
+    user: "0:0"
+    entrypoint: ["python", "scripts/gen_internal_mtls.py", "/app/ssl"]
+    environment:
+      BACKEND_TLS_ENABLED: "${BACKEND_TLS_ENABLED:-true}"
+    volumes:
+      - type: bind
+        source: "${SSL_DIR:?SSL_DIR must be set (dir containing fullchain.pem + privkey.pem)}"
+        target: /app/ssl
+    networks: [payshield-net]
+    restart: "no"
+    logging: *default-logging
