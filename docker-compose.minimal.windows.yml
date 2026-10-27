@@ -207,11 +207,11 @@ services:
       # NGINX→backend mTLS (A-6), on by default — see docker-compose.yml's identical section.
       BACKEND_TLS_ENABLED: "${BACKEND_TLS_ENABLED:-true}"
       UVICORN_TLS_PORT:    "${UVICORN_TLS_PORT:-8443}"
-      BACKEND_SSL_CERTFILE: "${BACKEND_TLS_ENABLED:+/app/ssl/backend.crt}"
-      BACKEND_SSL_KEYFILE:  "${BACKEND_TLS_ENABLED:+/app/ssl/backend.key}"
-      BACKEND_SSL_CA_CERTS: "${BACKEND_TLS_ENABLED:+/app/ssl/ca.crt}"
-      HEALTHCHECK_CLIENT_CERT: "${BACKEND_TLS_ENABLED:+/app/ssl/nginx-client.crt}"
-      HEALTHCHECK_CLIENT_KEY:  "${BACKEND_TLS_ENABLED:+/app/ssl/nginx-client.key}"
+      BACKEND_SSL_CERTFILE: "${BACKEND_SSL_CERTFILE:-/app/ssl/backend.crt}"
+      BACKEND_SSL_KEYFILE:  "${BACKEND_SSL_KEYFILE:-/app/ssl/backend.key}"
+      BACKEND_SSL_CA_CERTS: "${BACKEND_SSL_CA_CERTS:-/app/ssl/ca.crt}"
+      HEALTHCHECK_CLIENT_CERT: "${HEALTHCHECK_CLIENT_CERT:-/app/ssl/nginx-client.crt}"
+      HEALTHCHECK_CLIENT_KEY:  "${HEALTHCHECK_CLIENT_KEY:-/app/ssl/nginx-client.key}"
 
       # Secret sourcing (2026-07 fix): see docker-compose.yml's identical
       # comment -- USE_AWS_SM was never listed here, so a non-AWS customer's
@@ -585,7 +585,7 @@ services:
       mtls-init:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "if [ \"$BACKEND_TLS_ENABLED\" = \"true\" ]; then curl -sf -k ${HEALTHCHECK_CLIENT_CERT:+--cert \"$HEALTHCHECK_CLIENT_CERT\"} ${HEALTHCHECK_CLIENT_KEY:+--key \"$HEALTHCHECK_CLIENT_KEY\"} \"https://localhost:${UVICORN_TLS_PORT:-8443}/health\"; else curl -sf http://localhost:8000/health; fi"]
+      test: ["CMD-SHELL", "if [ \"$$BACKEND_TLS_ENABLED\" = \"true\" ]; then curl -sf -k $${HEALTHCHECK_CLIENT_CERT:+--cert \"$$HEALTHCHECK_CLIENT_CERT\"} $${HEALTHCHECK_CLIENT_KEY:+--key \"$$HEALTHCHECK_CLIENT_KEY\"} \"https://localhost:$${UVICORN_TLS_PORT:-8443}/health\"; else curl -sf http://localhost:8000/health; fi"]
       interval: 15s
       timeout: 10s
       retries: 8
