@@ -15,10 +15,19 @@ RAW = (ROOT / ".github/workflows/installer-ci.yml").read_text(encoding="utf-8")
 
 
 class InstallerCi(unittest.TestCase):
-    def test_both_tiers_run_on_both_supported_ubuntu_releases(self):
+    def test_minimal_runs_on_every_push_and_full_only_by_hand_on_both_supported_ubuntu_releases(self):
         m = WF["jobs"]["installer"]["strategy"]["matrix"]
-        self.assertEqual(sorted(m["tier"]), ["full", "minimal"])
         self.assertEqual(sorted(m["os"]), ["ubuntu-22.04", "ubuntu-24.04"])
+        expr = m["tier"]
+        self.assertIn('["minimal"]', expr)
+        self.assertIn('["minimal","full"]', expr)
+        self.assertIn("workflow_dispatch", expr)
+        self.assertIn("run_full", WF[True]["workflow_dispatch"]["inputs"])
+
+    def test_only_free_hosted_runners_are_used(self):
+        self.assertNotIn("FULL_RUNNER", RAW)
+        for job in WF["jobs"].values():
+            self.assertRegex(job["runs-on"], r"^(ubuntu-\d+\.\d+|\$\{\{ matrix\.os \}\})$")
 
     def test_the_installer_job_waits_for_the_guard_and_does_not_stop_at_the_first_failing_cell(self):
         j = WF["jobs"]["installer"]

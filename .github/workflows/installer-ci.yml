@@ -4,15 +4,22 @@ name: installer-ci
 # releases. The installer expects the three repos side by side, so they are checked out into one workspace root. The sibling repos
 # are private: set the REPO_PAT secret (read access to nonashield-backend and nonashield-apigateway).
 #
-# Not covered here, by design: install-windows*.ps1 (needs a Windows runner with Docker; install-windows.ps1 is never modified, see
-# the guard job), and nginx's GeoIP database, which needs a MaxMind licence, so the edge is reported but only the backend, postgres
-# and redis are asserted. The `full` tier needs more than the 7 GB of a standard runner; set the FULL_RUNNER repository variable to a
-# larger runner label to run it, otherwise it runs on ubuntu-22.04 and may fail for memory, not for the installer.
+# Free runners only. The `minimal` tier runs on every push and pull request. The `full` tier (13-15 services) is more than the 7 GB of a
+# free hosted runner, so it is run by hand (Actions > installer-ci > Run workflow > run_full) and may fail for memory, not for the
+# installer; it is otherwise tested on a real VM.
+# Not covered, by design: install-windows*.ps1 (needs a Windows runner with Docker; install-windows.ps1 is never modified, see the
+# guard job), and nginx's GeoIP database, which needs a MaxMind licence, so the edge is reported but only the backend, postgres and
+# redis are asserted.
 on:
   pull_request:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      run_full:
+        description: "Also run the full tier (needs more memory than a free runner has)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -36,13 +43,13 @@ jobs:
   installer:
     name: ${{ matrix.tier }} on ${{ matrix.os }}
     needs: guard
-    runs-on: ${{ matrix.tier == 'full' && (vars.FULL_RUNNER || matrix.os) || matrix.os }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, ubuntu-24.04]
-        tier: [minimal, full]
+        tier: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.run_full && '["minimal","full"]' || '["minimal"]') }}
     env:
       PAYSHIELD_TIER: ${{ matrix.tier }}
       PAYSHIELD_ENV: development
