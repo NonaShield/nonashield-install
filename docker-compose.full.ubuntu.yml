@@ -657,6 +657,7 @@ services:
       - --web.enable-admin-api
     volumes:
       - ../payshield-backend/infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../payshield-backend/infra/prometheus/rules:/etc/prometheus/rules:ro
       # A-6: client certificate for scraping the backend's /metrics over mTLS.
       - type: bind
         source: "${SSL_DIR:?SSL_DIR must be set (dir containing fullchain.pem + privkey.pem)}"

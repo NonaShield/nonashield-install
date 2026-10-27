@@ -1,0 +1,90 @@
+name: installer-ci
+
+# E-5: run the Ubuntu installer on a clean VM (a fresh GitHub-hosted runner is one) for both tiers, on both supported Ubuntu
+# releases. The installer expects the three repos side by side, so they are checked out into one workspace root. The sibling repos
+# are private: set the REPO_PAT secret (read access to nonashield-backend and nonashield-apigateway).
+#
+# Not covered here, by design: install-windows*.ps1 (needs a Windows runner with Docker; install-windows.ps1 is never modified, see
+# the guard job), and nginx's GeoIP database, which needs a MaxMind licence, so the edge is reported but only the backend, postgres
+# and redis are asserted. The `full` tier needs more than the 7 GB of a standard runner; set the FULL_RUNNER repository variable to a
+# larger runner label to run it, otherwise it runs on ubuntu-22.04 and may fail for memory, not for the installer.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Compose copies in sync, proven installer untouched
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {path: install, fetch-depth: 0}
+      - uses: actions/checkout@v4
+        with: {repository: NonaShield/nonashield-backend, path: payshield-backend, token: "${{ secrets.REPO_PAT }}"}
+      - run: python3 install/tools/sync_compose.py --check
+      - name: install-windows.ps1 is proven and never modified
+        if: github.event_name == 'pull_request'
+        run: |
+          cd install
+          git diff --exit-code "origin/${{ github.base_ref }}...HEAD" -- install-windows.ps1
+
+  installer:
+    name: ${{ matrix.tier }} on ${{ matrix.os }}
+    needs: guard
+    runs-on: ${{ matrix.tier == 'full' && (vars.FULL_RUNNER || matrix.os) || matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+        tier: [minimal, full]
+    env:
+      PAYSHIELD_TIER: ${{ matrix.tier }}
+      PAYSHIELD_ENV: development
+      SKIP_OLLAMA: "1"
+      INSTALL_DIR: /opt/payshield
+    steps:
+      - uses: actions/checkout@v4
+        with: {path: stack/install}
+      - uses: actions/checkout@v4
+        with: {repository: NonaShield/nonashield-backend, path: stack/nonashield-backend, token: "${{ secrets.REPO_PAT }}"}
+      - uses: actions/checkout@v4
+        with: {repository: NonaShield/nonashield-apigateway, path: stack/nginx, token: "${{ secrets.REPO_PAT }}"}
+
+      - name: Install
+        run: sudo -E bash stack/install/install-ubuntu.sh install
+
+      - name: Backend is healthy
+        run: |
+          for i in $(seq 1 60); do
+            curl -fsS http://localhost:8000/health && exit 0
+            sleep 5
+          done
+          sudo -E bash stack/install/install-ubuntu.sh logs | tail -200 || true
+          exit 1
+
+      - name: Report every service
+        run: sudo -E bash stack/install/install-ubuntu.sh health
+
+      - name: A second install never overwrites the secrets
+        run: |
+          before=$(sudo sha256sum "$INSTALL_DIR"/*-backend/.env | awk '{print $1}')
+          sudo -E bash stack/install/install-ubuntu.sh install
+          after=$(sudo sha256sum "$INSTALL_DIR"/*-backend/.env | awk '{print $1}')
+          test "$before" = "$after"
+
+      - name: Stop and start keeps working
+        run: |
+          sudo -E bash stack/install/install-ubuntu.sh down
+          sudo -E bash stack/install/install-ubuntu.sh up
+          for i in $(seq 1 60); do curl -fsS http://localhost:8000/health && exit 0; sleep 5; done
+          exit 1
+
+      - name: Uninstall
+        if: always()
+        run: sudo -E bash stack/install/install-ubuntu.sh uninstall
