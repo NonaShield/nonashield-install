@@ -347,6 +347,7 @@ services:
       AUTONOMOUS_CONFIDENCE_THRESHOLD:
       AUTONOMOUS_DECISION_ENABLED:
       AUTONOMOUS_TTL_SECONDS:
+      AUTO_TUNE:
       AWS_DEFAULT_REGION:
       AWS_ENDPOINT_URL:
       AWS_KEY_PREFIX:
@@ -522,6 +523,7 @@ services:
       SEQ_EDIT_THRESHOLD:
       SEQ_JACCARD_THRESHOLD:
       SEQ_NGRAM_SIZE:
+      SERVER:
       SESSION_BURST_THRESHOLD:
       SESSION_HARD_VEL_CAP:
       SESSION_LOOP_THRESHOLD:
@@ -566,6 +568,9 @@ services:
       UPLOAD_MAX_BYTES:
       USER_RATE_THRESHOLD:
       USER_RATE_WINDOW:
+      VAULT_ADDR:
+      VAULT_TOKEN:
+      WEB_CONCURRENCY:
       # <<< generated <<<
     volumes:
       - ../payshield-backend/keys:/app/keys

@@ -1001,6 +1001,7 @@ services:
       AUTONOMOUS_CONFIDENCE_THRESHOLD:
       AUTONOMOUS_DECISION_ENABLED:
       AUTONOMOUS_TTL_SECONDS:
+      AUTO_TUNE:
       AWS_KEY_PREFIX:
       AWS_SECRET_GROUPS:
       AWS_SECRET_PREFIX:
@@ -1141,6 +1142,7 @@ services:
       SEQ_EDIT_THRESHOLD:
       SEQ_JACCARD_THRESHOLD:
       SEQ_NGRAM_SIZE:
+      SERVER:
       SESSION_BURST_THRESHOLD:
       SESSION_HARD_VEL_CAP:
       SESSION_LOOP_THRESHOLD:
@@ -1175,6 +1177,7 @@ services:
       UPLOAD_MAX_BYTES:
       USER_RATE_THRESHOLD:
       USER_RATE_WINDOW:
+      WEB_CONCURRENCY:
       # <<< generated <<<
     volumes:
       - ../payshield-backend/keys:/app/keys
