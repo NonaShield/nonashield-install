@@ -5,7 +5,7 @@
 # committed separately) — nothing below differs by host OS. Deliberately
 # leaner than docker-compose.full.linux.yml at the APPLICATION level, not
 # just the compose level: ENABLE_KAFKA_AUDIT=false below means the backend
-# itself never tries to reach Redpanda, so no redpanda/processor/ingestion
+# itself never tries to reach Redpanda, so no redpanda/processor
 # container is needed at all here.
 #
 # Scope: device/SDK -> nginx (edge trust verification + RASP/behavior/geo

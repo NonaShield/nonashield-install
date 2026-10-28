@@ -5,7 +5,7 @@
 # committed separately) — nothing below differs by host OS. Deliberately
 # leaner than docker-compose.full.windows.yml at the APPLICATION level, not
 # just the compose level: ENABLE_KAFKA_AUDIT=false below means the backend
-# itself never tries to reach Redpanda, so no redpanda/processor/ingestion
+# itself never tries to reach Redpanda, so no redpanda/processor
 # container is needed at all here (unlike docker-compose.minimal.*.yml's
 # earlier draft, which kept those as a compose-level guess about hard
 # dependencies — this file is the actually-verified minimal definition).

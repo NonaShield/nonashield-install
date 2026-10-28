@@ -22,7 +22,7 @@
 #   Edge      nginx (OpenResty + Lua pipeline)
 #   Infra     postgres · redis · redpanda · neo4j · minio · mqtt · vault · ollama
 #   Init      redpanda-init · minio-init · neo4j-init · vault-init · ollama-init
-#   App       backend · ingestion · processor · airflow
+#   App       backend · processor · airflow
 #   Obs       prometheus · grafana
 #
 # Required environment variables (no defaults — must be set):
@@ -1243,27 +1243,6 @@ services:
           # 512m: startup peak (alembic + create_all + model imports) can exceed
           # 400m; 512m leaves enough headroom without crowding other services.
           memory: "${BACKEND_MEMORY_LIMIT:-512m}"
-
-  ingestion:
-    build: ../payshield-backend/ingestion
-    image: nonashield/ingestion:latest
-    container_name: payshield-ingestion
-    environment:
-      KAFKA_BOOTSTRAP_SERVERS: redpanda:29092
-      KAFKA_TOPIC:             telemetry
-      APP_ENV:                 "${APP_ENV:-production}"
-    networks: [payshield-net]
-    depends_on:
-      redpanda:
-        condition: service_healthy
-      redpanda-init:
-        condition: service_completed_successfully
-    restart: unless-stopped
-    logging: *default-logging
-    deploy:
-      resources:
-        limits:
-          memory: 64m
 
   processor:
     build:

@@ -537,7 +537,6 @@ print_service_urls() {
         echo -e "  ${DIM}  Neo4j, MinIO, Redpanda/Kafka, AI Fraud Advisory (Ollama),${RESET}"
         echo -e "  ${DIM}  Airflow, Prometheus, Grafana, Vault UI${RESET}"
     else
-        echo -e "  ${CYAN}Go Ingest Service        http://${ip}:8080${RESET}"
         echo -e "  ${CYAN}Redpanda Console         http://${ip}:8081${RESET}"
         echo -e "  ${CYAN}Airflow Orchestrator     http://${ip}:8083  (admin / see .env)${RESET}"
         echo -e "  ${CYAN}Grafana Dashboards       http://${ip}:3000  (admin / see .env)${RESET}"

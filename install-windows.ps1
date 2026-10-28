@@ -397,7 +397,6 @@ function Invoke-Up {
     Write-Host "  ─────────────────────────────────────────────────────────" -ForegroundColor DarkGray
     Write-Host "  Backend API (Swagger)    http://localhost:8000/docs" -ForegroundColor Cyan
     Write-Host "  Backend Health           http://localhost:8000/health" -ForegroundColor Cyan
-    Write-Host "  Go Ingest Service        http://localhost:8080" -ForegroundColor Cyan
     Write-Host "  Airflow Orchestrator     http://localhost:8083  (admin / see .env)" -ForegroundColor Cyan
     Write-Host "  Grafana Dashboards       http://localhost:3000  (admin / see .env)" -ForegroundColor Cyan
     Write-Host "  MinIO Console            http://localhost:9001  (payshield / see .env)" -ForegroundColor Cyan

@@ -15,7 +15,7 @@ below before touching anything AWS-related.
 | Tier | Services | Use case |
 |---|---|---|
 | **minimal** | nginx, backend, postgres, redis (4 services) | Fast setup, evaluation, lightweight production without Kafka-based audit streaming. `ENABLE_KAFKA_AUDIT=false` — the backend never tries to reach Redpanda, so there's no partial/broken dependency, this tier is genuinely self-contained. |
-| **full** | All 13–15 services: nginx, backend, postgres, redis, redpanda, neo4j, minio, mqtt, vault, ollama, airflow, prometheus, grafana (+ ingestion/processor on some platforms) | Full fraud-graph analysis (Neo4j), Kafka-based audit trail (Redpanda), evidence object storage (MinIO), analyst LLM features (Ollama), job scheduling (Airflow), and observability (Prometheus/Grafana). |
+| **full** | All 13–15 services: nginx, backend, postgres, redis, redpanda, neo4j, minio, mqtt, vault, ollama, airflow, prometheus, grafana (+ processor on some platforms) | Full fraud-graph analysis (Neo4j), Kafka-based audit trail (Redpanda), evidence object storage (MinIO), analyst LLM features (Ollama), job scheduling (Airflow), and observability (Prometheus/Grafana). |
 
 Both tiers share the same nginx edge security pipeline (RASP/behavioral/geo
 ingestion, trust verification) and the same core backend (enrollment, threat

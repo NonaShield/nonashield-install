@@ -1,7 +1,7 @@
 # =============================================================================
 # PayShield — One-Step Windows Installer (MINIMAL tier)
 # Installs ALL prerequisites, configures environment, and starts the minimal
-# stack: nginx + backend + ingestion + processor + postgres + redis +
+# stack: nginx + backend + processor + postgres + redis +
 # redpanda + neo4j + minio + mqtt. Omits Ollama, Vault, Airflow, Prometheus,
 # and Grafana — see docker-compose.minimal.windows.yml's own header comment
 # for exactly why each is confirmed safe to skip (advisory-only / no

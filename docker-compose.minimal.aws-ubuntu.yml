@@ -27,7 +27,7 @@
 # substituted here. Deliberately leaner than the full stack at the
 # APPLICATION level, not just the compose level: ENABLE_KAFKA_AUDIT=false
 # below means the backend itself never tries to reach Redpanda, so no
-# redpanda/processor/ingestion container is needed at all here.
+# redpanda/processor container is needed at all here.
 #
 # Scope: device/SDK -> nginx (edge trust verification + RASP/behavior/geo
 # ingestion) -> backend (enrollment, threat ingestion, SOC dashboard) ->

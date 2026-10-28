@@ -255,7 +255,6 @@ configure_firewall() {
     if [[ "$PAYSHIELD_ENV" == "development" ]]; then
         # Dev: expose all service ports locally (restrict to VPC/SG on AWS)
         ufw allow 8000/tcp  comment "Backend API"      > /dev/null
-        ufw allow 8080/tcp  comment "Go Ingest"        > /dev/null
         ufw allow 8081/tcp  comment "Redpanda Console" > /dev/null
         ufw allow 8083/tcp  comment "Airflow"          > /dev/null
         ufw allow 3000/tcp  comment "Grafana"          > /dev/null
@@ -676,7 +675,6 @@ print_service_urls() {
         echo -e "  ${DIM}  Neo4j, MinIO, Redpanda/Kafka, AI Fraud Advisory (Ollama),${RESET}"
         echo -e "  ${DIM}  Airflow, Prometheus, Grafana, Vault UI${RESET}"
     else
-        echo -e "  ${CYAN}Go Ingest Service        http://${ip}:8080${RESET}"
         echo -e "  ${CYAN}Redpanda Console         http://${ip}:8081${RESET}"
         echo -e "  ${CYAN}Airflow Orchestrator     http://${ip}:8083  (admin / see .env)${RESET}"
         echo -e "  ${CYAN}Grafana Dashboards       http://${ip}:3000  (admin / see .env)${RESET}"
