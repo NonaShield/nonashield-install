@@ -24,4 +24,6 @@ if have gitleaks; then
 else echo "skipped: gitleaks is not installed"; fi
 
 echo
+step "branch policy (every workflow manual-only, nothing deploys or pushes main)"
+"${PY:-python}" scripts/check_branch_policy.py || FAILED=1
 if [ "$FAILED" = 0 ]; then echo "SAST OK (tools that were not installed were skipped)"; else echo "SAST FAILED"; exit 1; fi

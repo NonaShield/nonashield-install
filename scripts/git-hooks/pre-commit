@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# No direct commit on main. Commit on demo; main only receives demo through scripts/promote_to_main.sh.
+if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = main ]; then
+  echo "STOP: no direct commits on main. Run: git checkout demo   (main moves only with scripts/promote_to_main.sh)" >&2
+  exit 1
+fi
+exit 0

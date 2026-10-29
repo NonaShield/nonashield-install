@@ -1,0 +1,4 @@
+
+# Git hooks and shell scripts keep LF (bash rejects CRLF).
+scripts/git-hooks/* text eol=lf
+*.sh text eol=lf

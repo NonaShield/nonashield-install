@@ -11,9 +11,7 @@ name: installer-ci
 # guard job), and nginx's GeoIP database, which needs a MaxMind licence, so the edge is reported but only the backend, postgres and
 # redis are asserted.
 on:
-  pull_request:
-  push:
-    branches: [main]
+  # Manual only: nothing starts on a push, pull request, schedule or tag. Run it from the Actions tab (branch demo or main).
   workflow_dispatch:
     inputs:
       run_full:

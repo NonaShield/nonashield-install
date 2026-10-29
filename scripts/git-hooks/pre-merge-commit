@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# A merge commit on main is a direct commit on main. Merge on demo instead.
+if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = main ]; then
+  echo "STOP: no merge commits on main. Merge on demo, push demo, then run scripts/promote_to_main.sh" >&2
+  exit 1
+fi
+exit 0

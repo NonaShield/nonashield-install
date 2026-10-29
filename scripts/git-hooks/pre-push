@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# main may only be pushed to a commit that is already on origin/demo (that is what scripts/promote_to_main.sh does). Deleting main is refused.
+zero=0000000000000000000000000000000000000000
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$remote_ref" = refs/heads/main ] || continue
+  if [ "$local_sha" = "$zero" ]; then
+    echo "STOP: deleting main is not allowed." >&2; exit 1
+  fi
+  if ! git rev-parse -q --verify refs/remotes/origin/demo >/dev/null \
+     || ! git merge-base --is-ancestor "$local_sha" refs/remotes/origin/demo; then
+    echo "STOP: main may only move to a commit that is already on origin/demo. Run: bash scripts/promote_to_main.sh" >&2
+    exit 1
+  fi
+done
+exit 0
