@@ -22,6 +22,8 @@ ingestion, trust verification) and the same core backend (enrollment, threat
 ingestion, SOC dashboard) — the difference is purely in which supporting
 infrastructure is present.
 
+A consent-only tenant (consent evidence without the threat and fraud product) runs on the **minimal** tier; it needs none of the full-tier services.
+
 ## Platform matrix
 
 | Platform | Minimal | Full |
